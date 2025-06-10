@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>频段分配工具</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background: linear-gradient(135deg, #1a2a6c, #b21f1f, #fdbb2d);
+            min-height: 100vh;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            color: white;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.2rem;
+            max-width: 600px;
+            line-height: 1.6;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            width: 90%;
+            max-width: 1200px;
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .toolbar {
+            display: flex;
+            justify-content: space-between;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 10px;
+            margin-bottom: 25px;
+        }
+
+        .btn {
+            padding: 12px 25px;
+            background: #4a69bd;
+            color: white;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .btn:hover {
+            background: #1e3799;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 8px rgba(0, 0, 0, 0.15);
+        }
+
+        .btn.reset {
+            background: #e55039;
+        }
+
+        .btn.reset:hover {
+            background: #eb2f06;
+        }
+
+        .bands-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            margin-bottom: 30px;
+            min-height: 150px;
+        }
+
+        .band {
+            position: relative;
+            min-width: 100px;
+            height: 80px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: grab;
+            font-weight: bold;
+            color: rgba(0, 0, 0, 0.8);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+            user-select: none;
+            transition: transform 0.2s ease, box-shadow 0.3s ease;
+        }
+
+        .band:hover {
+            transform: scale(1.05);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .band:active {
+            cursor: grabbing;
+        }
+
+        .band::after {
+            content: '';
+            position: absolute;
+            bottom: 5px;
+            right: 5px;
+            width: 15px;
+            height: 15px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 3px;
+            cursor: nwse-resize;
+        }
+
+        .band.dragging {
+            opacity: 0.8;
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.7);
+        }
+
+        .target-area {
+            position: relative;
+            height: 120px;
+            background: white;
+            border: 3px solid #000;
+            border-radius: 8px;
+            margin-top: 20px;
+            overflow: hidden;
+            box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .instructions {
+            color: #fff;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 25px;
+            max-width: 800px;
+        }
+
+        .instructions h2 {
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .instructions ul {
+            list-style-type: none;
+            padding: 0 20px;
+        }
+
+        .instructions li {
+            margin: 12px 0;
+            display: flex;
+            align-items: flex-start;
+        }
+
+        .instructions li::before {
+            content: '•';
+            font-size: 1.5rem;
+            margin-right: 10px;
+            color: #4a69bd;
+        }
+
+        .grid-lines {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image:
+                linear-gradient(to right, #e0e0e0 1px, transparent 1px),
+                linear-gradient(to bottom, #e0e0e0 1px, transparent 1px);
+            background-size: 5% 100%, 100% 20px;
+            pointer-events: none;
+        }
+
+        .frequency-label {
+            position: absolute;
+            bottom: 5px;
+            font-size: 12px;
+            color: #666;
+            pointer-events: none;
+        }
+
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 20px;
+            padding: 10px 15px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            color: white;
+            font-size: 0.9rem;
+        }
+
+        .target-area .band {
+            position: absolute;
+            top: 0;
+            cursor: move;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>频段分配工具</h1>
+        <p>拖动彩色框体到目标区域，调整大小以分配频段资源。框体在目标区域内只能水平移动。</p>
+    </div>
+
+    <div class="container">
+        <div class="toolbar">
+            <button class="btn" id="addBand">添加新频段</button>
+            <button class="btn reset" id="resetBtn">重置所有</button>
+        </div>
+
+        <div class="bands-container" id="bandsContainer">
+            <!-- 频段框体将由JavaScript生成 -->
+        </div>
+
+        <h2 style="color: white; text-align: center; margin: 15px 0;">目标频段区域 ↓</h2>
+
+        <div class="target-area" id="targetArea">
+            <div class="grid-lines"></div>
+            <!-- 频段标签将由JavaScript生成 -->
+        </div>
+
+        <div class="status-bar">
+            <div>当前框体数: <span id="bandCount">0</span></div>
+            <div>目标区域使用率: <span id="usage">0%</span></div>
+            <div>操作提示: 拖动框体移动 | 右下角调整大小</div>
+        </div>
+    </div>
+
+    <div class="instructions">
+        <h2>使用说明</h2>
+        <ul>
+            <li><strong>拖动框体</strong> - 点击并拖动彩色框体到目标区域</li>
+            <li><strong>调整大小</strong> - 拖动框体右下角的手柄调整宽度</li>
+            <li><strong>目标区域约束</strong> - 在目标区域内，框体只能水平移动</li>
+            <li><strong>添加新频段</strong> - 点击"添加新频段"按钮创建随机颜色和宽度的新框体</li>
+            <li><strong>重置所有</strong> - 点击"重置所有"按钮清除目标区域内的所有框体</li>
+            <li><strong>频段分配</strong> - 尝试不重叠地排列框体以最大化利用目标区域</li>
+        </ul>
+    </div>
+
+    <script>
+        // 频段颜色集合
+        const bandColors = [
+            '#FF6B6B', '#4ECDC4', '#FFE66D', '#6A0572', '#1A936F', '#114B5F'
+        ];
+
+        // 频段名称
+        const bandNames = [
+            '通信频段', '广播频段', 'Wi-Fi频段', '5G频段', '卫星频段', '军用频段'
+        ];
+
+        // DOM 元素
+        const bandsContainer = document.getElementById('bandsContainer');
+        const targetArea = document.getElementById('targetArea');
+        const addBandBtn = document.getElementById('addBand');
+        const resetBtn = document.getElementById('resetBtn');
+        const bandCount = document.getElementById('bandCount');
+        const usage = document.getElementById('usage');
+
+        // 状态变量
+        let currentBand = null;
+        let isResizing = false;
+        let startX, startY, startWidth;
+        let offsetX, offsetY;
+        let bandCounter = 0;
+        let originalParent = null;
+        let originalPosition = null;
+
+        // 初始化频段框体
+        function initBands() {
+            bandsContainer.innerHTML = '';
+            targetArea.innerHTML = '<div class="grid-lines"></div>';
+            bandCounter = 0;
+            updateBandCount();
+            updateUsage();
+
+            // 创建初始的6个频段框体
+            for (let i = 0; i < 6; i++) {
+                createBand(bandColors[i], bandNames[i]);
+            }
+
+            // 添加频率标签
+            addFrequencyLabels();
+        }
+
+        // 创建频段框体
+        function createBand(color, name, width = 120) {
+            const band = document.createElement('div');
+            band.className = 'band';
+            band.style.backgroundColor = color;
+            band.style.width = width + 'px';
+            band.textContent = name;
+
+            // 设置唯一ID
+            band.dataset.id = `band-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+            // 添加事件监听器
+            band.addEventListener('mousedown', startDrag);
+
+            // 添加到容器
+            bandsContainer.appendChild(band);
+            bandCounter++;
+            updateBandCount();
+        }
+
+        // 添加频率标签
+        function addFrequencyLabels() {
+            for (let i = 0; i <= 10; i++) {
+                const label = document.createElement('div');
+                label.className = 'frequency-label';
+                label.style.left = (i * 10) + '%';
+                label.textContent = (i * 100) + 'MHz';
+                targetArea.appendChild(label);
+            }
+        }
+
+        // 更新框体计数
+        function updateBandCount() {
+            bandCount.textContent = bandCounter;
+        }
+
+        // 更新区域使用率
+        function updateUsage() {
+            const bandsInTarget = targetArea.querySelectorAll('.band');
+            let totalWidth = 0;
+
+            bandsInTarget.forEach(band => {
+                totalWidth += band.offsetWidth;
+            });
+
+            const usagePercent = Math.min(100, Math.round((totalWidth / targetArea.offsetWidth) * 100));
+            usage.textContent = usagePercent + '%';
+        }
+
+        // 开始拖动
+        function startDrag(e) {
+            // 检查是否是调整大小操作
+            if (e.offsetX > this.offsetWidth - 20 && e.offsetY > this.offsetHeight - 20) {
+                startResize(e, this);
+                return;
+            }
+
+            currentBand = this;
+            offsetX = e.clientX - this.getBoundingClientRect().left;
+            offsetY = e.clientY - this.getBoundingClientRect().top;
+
+            // 保存原始位置和父元素
+            originalParent = currentBand.parentElement;
+            originalPosition = {
+                left: currentBand.style.left,
+                top: currentBand.style.top,
+                position: currentBand.style.position
+            };
+
+            // 临时设置为fixed定位以便全局拖动
+            currentBand.style.position = 'fixed';
+            currentBand.style.zIndex = '1000';
+            currentBand.classList.add('dragging');
+
+            // 添加到body确保在所有元素上方
+            document.body.appendChild(currentBand);
+
+            // 设置初始位置
+            currentBand.style.left = (e.clientX - offsetX) + 'px';
+            currentBand.style.top = (e.clientY - offsetY) + 'px';
+
+            document.addEventListener('mousemove', dragBand);
+            document.addEventListener('mouseup', stopDrag);
+        }
+
+        // 拖动框体
+        function dragBand(e) {
+            if (!currentBand) return;
+
+            e.preventDefault();
+
+            // 计算新位置
+            let newX = e.clientX - offsetX;
+            let newY = e.clientY - offsetY;
+
+            // 应用新位置
+            currentBand.style.left = newX + 'px';
+            currentBand.style.top = newY + 'px';
+        }
+
+        // 停止拖动
+        function stopDrag(e) {
+            if (!currentBand) return;
+
+            currentBand.classList.remove('dragging');
+            currentBand.style.zIndex = '';
+
+            // 检查是否在目标区域内
+            const targetRect = targetArea.getBoundingClientRect();
+            const bandRect = currentBand.getBoundingClientRect();
+
+            // 如果框体在目标区域内
+            if (bandRect.top < targetRect.bottom &&
+                bandRect.bottom > targetRect.top &&
+                bandRect.left < targetRect.right &&
+                bandRect.right > targetRect.left) {
+
+                // 移动框体到目标区域
+                targetArea.appendChild(currentBand);
+
+                // 设置框体在目标区域内的位置
+                const relativeX = e.clientX - targetRect.left - offsetX;
+                const relativeY = 0;
+
+                currentBand.style.position = 'absolute';
+                currentBand.style.left = Math.max(0, relativeX) + 'px';
+                currentBand.style.top = relativeY + 'px';
+            } else {
+                // 不在目标区域内，返回原始位置
+                if (originalParent) {
+                    originalParent.appendChild(currentBand);
+                }
+
+                // 恢复原始样式
+                currentBand.style.position = originalPosition.position;
+                currentBand.style.left = originalPosition.left;
+                currentBand.style.top = originalPosition.top;
+            }
+
+            // 清理
+            document.removeEventListener('mousemove', dragBand);
+            document.removeEventListener('mouseup', stopDrag);
+            currentBand = null;
+            originalParent = null;
+            originalPosition = null;
+
+            updateUsage();
+        }
+
+        // 开始调整大小
+        function startResize(e, band) {
+            isResizing = true;
+            currentBand = band;
+            startX = e.clientX;
+            startWidth = currentBand.offsetWidth;
+
+            document.addEventListener('mousemove', resizeBand);
+            document.addEventListener('mouseup', stopResize);
+        }
+
+        // 调整大小
+        function resizeBand(e) {
+            if (!isResizing || !currentBand) return;
+
+            const widthDiff = e.clientX - startX;
+            let newWidth = Math.max(80, startWidth + widthDiff);
+
+            // 如果在目标区域内，限制最大宽度
+            if (currentBand.parentElement === targetArea) {
+                const bandRect = currentBand.getBoundingClientRect();
+                const targetRect = targetArea.getBoundingClientRect();
+                const maxWidth = targetRect.right - bandRect.left;
+                newWidth = Math.min(newWidth, maxWidth);
+            }
+
+            currentBand.style.width = newWidth + 'px';
+            updateUsage();
+        }
+
+        // 停止调整大小
+        function stopResize() {
+            isResizing = false;
+            currentBand = null;
+
+            document.removeEventListener('mousemove', resizeBand);
+            document.removeEventListener('mouseup', stopResize);
+        }
+
+        // 添加新频段
+        function addNewBand() {
+            const color = `hsl(${Math.random() * 360}, 70%, 60%)`;
+            const name = `频段 ${bandCounter + 1}`;
+            const width = Math.floor(Math.random() * 121) + 80; // 80-200px
+
+            createBand(color, name, width);
+        }
+
+        // 重置所有
+        function resetAll() {
+            // 将所有框体移回容器
+            const bandsInTarget = targetArea.querySelectorAll('.band');
+            bandsInTarget.forEach(band => {
+                bandsContainer.appendChild(band);
+                band.style.position = '';
+                band.style.left = '';
+                band.style.top = '';
+            });
+
+            updateUsage();
+        }
+
+        // 事件监听器
+        addBandBtn.addEventListener('click', addNewBand);
+        resetBtn.addEventListener('click', resetAll);
+
+        // 初始化
+        window.addEventListener('DOMContentLoaded', initBands);
+
+        // 添加目标区域的事件监听器，允许在区域内拖动框体
+        targetArea.addEventListener('mousedown', function(e) {
+            if (e.target.classList.contains('band')) {
+                startDrag.call(e.target, e);
+            }
+        });
+    </script>
+</body>
+</html>
