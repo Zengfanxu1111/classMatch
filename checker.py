@@ -13,7 +13,7 @@ _LOCAL_CC_ADDRESS_LABEL = "本端CC地址:"
 _REMOTE_XX_ADDRESS_LABEL = "对端XX地址："
 _CHANNEL_TYPE_LABEL = "信道类型选择："  # 新增标签
 
-# --- 静态的正确答案定义 ---
+# --- 静态的正确答案定义 (注意: 这些定义本身不再用于计分，但标签和结构用于界面和文件捕获) ---
 # 移除了 (1) xx参数 和 (2) Xxx站配置参数 的正确答案定义，因为它们不再计入成绩。
 
 # (3) 信道段参数 (NOTE: Specific values are now logic-dependent, not fixed here)
@@ -40,14 +40,14 @@ _NETWORK_ANALYSIS_HEADERS = ["用户单位", "站型", "站地址", "CC地址", 
 # 2.点对点通信参数
 # IMPORTANT: Correct answers for specific values are NOT defined here, as they are no longer checked for exact match.
 # Only KBP and frequency relationship rules apply.
-# _CORRECT_LOCAL_CC_ADDRESS and _CORRECT_REMOTE_XX_ADDRESS are KEPT as placeholders,
-# but their comparison logic is removed in check_paper for this section.
+# _CORRECT_LOCAL_CC_ADDRESS and _CORRECT_REMOTE_XX_ADDRESS are KEPT as placeholders for interface labels.
 _CORRECT_LOCAL_CC_ADDRESS = "192.168.1.100"  # Placeholder, no longer checked for exact match
 _CORRECT_REMOTE_XX_ADDRESS = "10.0.0.1"  # Placeholder, no longer checked for exact match
 
 _P2P_HEADERS = ["名称", "速率kbps", "带宽（khz）", "下行起始频点（khz）", "下行终止频点（khz）", "上行起始频点（khz）",
                 "上行终止频点（khz）"]
-# Column indices for P2P table values that are relevant for new logic checks
+_P2P_FILLABLE_COLS_INDICES = [1, 2, 3, 4, 5,
+                              6]  # RE-ENABLED: Used for general structure checks, not exact content matching.
 _P2P_RATE_COL_INDEX = 1
 _P2P_BANDWIDTH_COL_INDEX = 2
 _P2P_DOWNLINK_START_COL_INDEX = 3
@@ -101,8 +101,7 @@ _COMPARISON_CONFIG = {
         # Keep as placeholders, not for exact check
         "report_headers": _P2P_HEADERS,
         # No correct_dataframe_values needed for exact match
-        "fillable_cols_indices": _P2P_FILLABLE_COLS_INDICES,
-        # Keep for consistency in structure checks if needed, but not for exact cell matching
+        "fillable_cols_indices": _P2P_FILLABLE_COLS_INDICES,  # RE-ENABLED: Used for general structure checks.
         "params": ["local_cc_address_value", "remote_xx_address_value", "p2p_value"]
     },
     "3.虚拟子网参数": {
@@ -435,6 +434,7 @@ def check_paper(
     for friendly_title, config in _COMPARISON_CONFIG.items():
         error_count = 0
         current_section_detailed_errors = []  # Errors specific to this section
+        section_format_error = False  # Flag for format errors that prevent detailed counting
 
         if config["check_type"] == _CHECK_TYPE_TEXTBOX_GROUP:
             # This type is currently not used in _COMPARISON_CONFIG as (1) and (2) are ignored.
@@ -465,102 +465,104 @@ def check_paper(
             # Validate user input structure
             if not isinstance(user_df_value, list) or not all(isinstance(row, list) for row in user_df_value):
                 # If not a list of lists, treat as major format error.
-                # Count all possible fillable cells as errors if structure is completely wrong.
-                total_expected_errors = len(correct_values) * len(fillable_cols_indices) if fillable_cols_indices else 0
-                error_count += total_expected_errors
+                section_format_error = True
                 current_section_detailed_errors.append({
                     'section_title': friendly_title,
                     'type': 'dataframe_format_error',
                     'message': "表格格式错误或无法解析。请确保输入为有效数据。"
                 })
-                error_sections_with_counts.append((friendly_title, "格式错误或解析失败"))
-                error_titles_only.append(friendly_title)
-                continue  # Skip detailed comparison for this section
+                # We cannot accurately count individual cell errors if format is wrong, so don't increment error_count here yet.
+                # The 'total_items' in radar calculation will account for this as a full penalty.
 
-            user_rows = len(user_df_value)
-            correct_rows = len(correct_values)
+            if not section_format_error:  # Proceed with detailed checks only if basic format is okay
+                user_rows = len(user_df_value)
+                correct_rows = len(correct_values)
 
-            # Compare row counts
-            if user_rows != correct_rows:
-                # Calculate errors for missing/extra rows.
-                # Here, we count errors for every 'missing' fillable cell or every 'extra' cell.
-                # Simplified: if row counts differ, assume the 'correct' cells are missing/wrong in unmatched rows.
-                # Only compare common rows to avoid index errors.
-                rows_to_compare = min(user_rows, correct_rows)
-                # Count errors for missing rows: for each missing correct row, add errors for all its fillable cells.
-                if user_rows < correct_rows:
-                    error_count += (correct_rows - user_rows) * len(fillable_cols_indices)
-
-                current_section_detailed_errors.append({
-                    'section_title': friendly_title,
-                    'type': 'row_count_mismatch',
-                    'message': f"行数不匹配: 您的表格有 {user_rows} 行，应有 {correct_rows} 行。",
-                    'user_value': str(user_rows),
-                    'answer_value': str(correct_rows)
-                })
-            else:
-                rows_to_compare = user_rows
-
-            # Identify frequency columns for Virtual Subnet table (if applicable)
-            # This is for "3.虚拟子网参数" specifically
-            virtual_subnet_downlink_start_idx = 2
-            virtual_subnet_uplink_end_idx = 5
-
-            for r in range(rows_to_compare):
-                user_row = user_df_value[r]
-                # Determine columns to check in the current row based on user's column count
-                max_fillable_col_idx = max(fillable_cols_indices) if fillable_cols_indices else -1
-
-                if len(user_row) <= max_fillable_col_idx:
-                    # If user row has too few columns, count errors for missing fillable cells *in this row*
-                    missing_cols_in_row = len([idx for idx in fillable_cols_indices if idx >= len(user_row)])
-                    error_count += missing_cols_in_row
+                # Compare row counts
+                if user_rows != correct_rows:
+                    # Calculate errors for missing/extra rows.
+                    # For score calculation, each 'missing' fillable cell is an error.
+                    if user_rows < correct_rows:
+                        error_count += (correct_rows - user_rows) * len(fillable_cols_indices)
+                    elif user_rows > correct_rows:  # Penalize extra rows for simplicity, or just ignore them
+                        # For now, let's just count errors for expected missing data, not extra input.
+                        # Can be refined based on exact grading policy.
+                        pass
                     current_section_detailed_errors.append({
                         'section_title': friendly_title,
-                        'type': 'column_count_mismatch',
-                        'row': r + 1,
-                        'message': f"第 {r + 1} 行列数不足，缺少应填写的列。",
-                        'user_value': str(len(user_row)),
-                        'answer_value': f"至少需要 {max_fillable_col_idx + 1} 列"
+                        'type': 'row_count_mismatch',
+                        'message': f"行数不匹配: 您的表格有 {user_rows} 行，应有 {correct_rows} 行。",
+                        'user_value': str(user_rows),
+                        'answer_value': str(correct_rows)
                     })
-                    cols_to_check_in_row = [idx for idx in fillable_cols_indices if idx < len(user_row)]
-                else:
-                    cols_to_check_in_row = fillable_cols_indices
 
-                for c_idx in cols_to_check_in_row:
-                    # Find the corresponding index in the correct_values row based on the fillable_cols_indices mapping
-                    # This assumes correct_values lists only the *fillable* columns in order
-                    correct_val_relative_idx = fillable_cols_indices.index(c_idx)
+                rows_to_compare = min(user_rows, correct_rows)
 
-                    user_val = str(user_row[c_idx]).strip()
-                    correct_val = str(correct_values[r][correct_val_relative_idx]).strip()
+                # Identify frequency columns for Virtual Subnet table (if applicable)
+                # This is for "3.虚拟子网参数" specifically
+                virtual_subnet_downlink_start_idx = 2
+                virtual_subnet_uplink_end_idx = 5
 
-                    if user_val != correct_val:
-                        error_count += 1
-                        col_header_display = report_headers[c_idx] if c_idx < len(report_headers) else f"列 {c_idx + 1}"
+                for r in range(rows_to_compare):
+                    user_row = user_df_value[r]
+                    # Determine columns to check in the current row based on user's column count
+                    # Use fillable_cols_indices for general column count check
+                    max_expected_col_idx = max(fillable_cols_indices) if fillable_cols_indices else -1
+                    if len(user_row) <= max_expected_col_idx:
+                        # If user row has too few columns, count errors for missing fillable cells *in this row*
+                        missing_cols_in_row = len([idx for idx in fillable_cols_indices if idx > len(user_row) - 1])
+                        error_count += missing_cols_in_row
                         current_section_detailed_errors.append({
                             'section_title': friendly_title,
-                            'type': 'dataframe_cell',
-                            'row': r + 1,  # 1-based index
-                            'col': c_idx + 1,  # 1-based index
-                            'col_header': col_header_display,
-                            'user_value': user_val,
-                            'answer_value': correct_val
+                            'type': 'column_count_mismatch',
+                            'row': r + 1,
+                            'message': f"第 {r + 1} 行列数不足，缺少应填写的列。",
+                            'user_value': str(len(user_row)),
+                            'answer_value': f"至少需要 {max_expected_col_idx + 1} 列"
                         })
+                        # Adjust cols_to_check_in_row to only consider existing columns
+                        cols_to_check_in_row = [idx for idx in fillable_cols_indices if idx < len(user_row)]
+                    else:
+                        cols_to_check_in_row = fillable_cols_indices
 
-                # NEW: Check for Uplink_End <= Downlink_Start for "3.虚拟子网参数"
-                if friendly_title == "3.虚拟子网参数" and \
-                        len(user_row) > max(virtual_subnet_downlink_start_idx, virtual_subnet_uplink_end_idx):
-                    dl_start_val = user_row[virtual_subnet_downlink_start_idx]
-                    ul_end_val = user_row[virtual_subnet_uplink_end_idx]
+                    for c_idx in cols_to_check_in_row:
+                        # Find the corresponding index in the correct_values row based on the fillable_cols_indices mapping
+                        # This assumes correct_values lists only the *fillable* columns in order
+                        correct_val_relative_idx = fillable_cols_indices.index(c_idx)
 
-                    freq_rel_err_count, freq_rel_detailed_errors = _check_uplink_downlink_frequency_rule(
-                        friendly_title, r + 1,
-                        dl_start_val, ul_end_val,
-                        report_headers[virtual_subnet_downlink_start_idx], report_headers[virtual_subnet_uplink_end_idx]
-                    )
-                    error_count += freq_rel_err_count
-                    current_section_detailed_errors.extend(freq_rel_detailed_errors)
+                        user_val = str(user_row[c_idx]).strip()
+                        correct_val = str(correct_values[r][correct_val_relative_idx]).strip()
+
+                        if user_val != correct_val:
+                            error_count += 1
+                            col_header_display = report_headers[c_idx] if c_idx < len(
+                                report_headers) else f"列 {c_idx + 1}"
+                            current_section_detailed_errors.append({
+                                'section_title': friendly_title,
+                                'type': 'dataframe_cell',
+                                'row': r + 1,  # 1-based index
+                                'col': c_idx + 1,  # 1-based index
+                                'col_header': col_header_display,
+                                'user_value': user_val,
+                                'answer_value': correct_val
+                            })
+
+                    # Check for Uplink_End <= Downlink_Start for "3.虚拟子网参数" (if it has relevant columns)
+                    if friendly_title == "3.虚拟子网参数" and \
+                            len(user_row) > max(virtual_subnet_downlink_start_idx, virtual_subnet_uplink_end_idx) and \
+                            virtual_subnet_downlink_start_idx < len(user_row) and virtual_subnet_uplink_end_idx < len(
+                        user_row):  # ensure cols exist before accessing
+                        dl_start_val = user_row[virtual_subnet_downlink_start_idx]
+                        ul_end_val = user_row[virtual_subnet_uplink_end_idx]
+
+                        freq_rel_err_count, freq_rel_detailed_errors = _check_uplink_downlink_frequency_rule(
+                            friendly_title, r + 1,
+                            dl_start_val, ul_end_val,
+                            report_headers[virtual_subnet_downlink_start_idx],
+                            report_headers[virtual_subnet_uplink_end_idx]
+                        )
+                        error_count += freq_rel_err_count
+                        current_section_detailed_errors.extend(freq_rel_detailed_errors)
 
         elif config["check_type"] == _CHECK_TYPE_DATAFRAME_COLUMN_DUPLICATE:
             # Logic for 1.组网参数分析 (CC地址 uniqueness)
@@ -570,52 +572,54 @@ def check_paper(
             report_headers = config["report_headers"]
 
             if not isinstance(user_df_value, list) or not all(isinstance(row, list) for row in user_df_value):
-                # If malformed, treat all possible cells in that column as errors.
-                # Assuming 5 rows for this table based on `network_analysis_data`.
-                error_count += 5  # 5 potential CC addresses
+                section_format_error = True
                 current_section_detailed_errors.append({
                     'section_title': friendly_title,
                     'type': 'dataframe_format_error',
                     'message': "组网参数分析表格格式错误或无法解析。请确保输入为有效数据。"
                 })
-                error_sections_with_counts.append((friendly_title, "格式错误或解析失败"))
-                error_titles_only.append(friendly_title)
-                continue
 
-            value_first_row_map = {}  # Map value to its first occurring row index (0-based)
-            duplicate_rows_map = defaultdict(list)  # Map value to list of subsequent row indices (0-based)
+            if not section_format_error:
+                value_first_row_map = {}  # Map value to its first occurring row index (0-based)
+                duplicate_rows_map = defaultdict(list)  # Map value to list of subsequent row indices (0-based)
 
-            for r, row in enumerate(user_df_value):
-                # Ensure row has enough columns to access the target CC address column
-                if col_to_check_idx < len(row):
-                    cell_value = str(row[col_to_check_idx]).strip()
-                    if cell_value and cell_value != "":  # Only check non-empty values for duplication
-                        if cell_value in value_first_row_map:
-                            duplicate_rows_map[cell_value].append(r)
-                        else:
-                            value_first_row_map[cell_value] = r
-                else:
-                    # If a row is too short to contain the CC address, it's a format error for that cell.
-                    # This specific error is handled by `dataframe_cell` type check if it were a normal comparison.
-                    # For uniqueness, we just won't consider it for duplication.
-                    pass  # Not counting missing CC address as a duplicate error, but it might be caught by other checks later if any.
+                for r, row in enumerate(user_df_value):
+                    # Ensure row has enough columns to access the target CC address column
+                    if col_to_check_idx < len(row):
+                        cell_value = str(row[col_to_check_idx]).strip()
+                        if cell_value and cell_value != "":  # Only check non-empty values for duplication
+                            if cell_value in value_first_row_map:
+                                duplicate_rows_map[cell_value].append(r)
+                            else:
+                                value_first_row_map[cell_value] = r
+                    else:
+                        # If a row is too short to contain the CC address, it's a format error for that cell.
+                        # This isn't strictly a "duplicate" error, but rather a missing data error.
+                        # We can log it as a column_count_mismatch for completeness.
+                        error_count += 1  # Count as one error for this row's missing data
+                        current_section_detailed_errors.append({
+                            'section_title': friendly_title,
+                            'type': 'column_count_mismatch',
+                            'row': r + 1,
+                            'message': f"第 {r + 1} 行列数不足，缺少CC地址列，无法进行重复性校验。"
+                        })
 
-            # Count errors for each duplicate occurrence (excluding the first instance)
-            for value, row_indices in duplicate_rows_map.items():
-                error_count += len(row_indices)  # Each entry in row_indices is a duplicate
-                col_header_display = report_headers[col_to_check_idx] if col_to_check_idx < len(
-                    report_headers) else f"列 {col_to_check_idx + 1}"
+                # Count errors for each duplicate occurrence (excluding the first instance)
+                for value, row_indices in duplicate_rows_map.items():
+                    error_count += len(row_indices)  # Each entry in row_indices is a duplicate
+                    col_header_display = report_headers[col_to_check_idx] if col_to_check_idx < len(
+                        report_headers) else f"列 {col_to_check_idx + 1}"
 
-                for dup_r in row_indices:
-                    current_section_detailed_errors.append({
-                        'section_title': friendly_title,
-                        'type': 'dataframe_duplicate',  # New type for duplicate errors
-                        'row': dup_r + 1,  # 1-based index
-                        'col': col_to_check_idx + 1,  # 1-based index
-                        'col_header': col_header_display,
-                        'user_value': value,
-                        'message': f"值 '{value}' 在此行重复出现。CC地址列不允许重复。"
-                    })
+                    for dup_r in row_indices:
+                        current_section_detailed_errors.append({
+                            'section_title': friendly_title,
+                            'type': 'dataframe_duplicate',  # New type for duplicate errors
+                            'row': dup_r + 1,  # 1-based index
+                            'col': col_to_check_idx + 1,  # 1-based index
+                            'col_header': col_header_display,
+                            'user_value': value,
+                            'message': f"值 '{value}' 在此行重复出现。CC地址列不允许重复。"
+                        })
 
         elif config["check_type"] == _CHECK_TYPE_CHANNEL_FREQUENCY_LOGIC:
             user_df_value = _df_to_lol(input_values[config["params"][0]])
@@ -641,28 +645,27 @@ def check_paper(
             # Initial check for dataframe structure (expected to have at least one row for frequencies)
             if not isinstance(user_df_value, list) or len(user_df_value) == 0 or not all(
                     isinstance(row, list) for row in user_df_value):
-                # If basic structure is wrong or empty, count as full errors for frequency fields
-                error_count += 4  # 4 frequency checks (start/end downlink, start/end uplink)
+                section_format_error = True
                 current_section_detailed_errors.append({
                     'section_title': friendly_title,
                     'type': 'dataframe_format_error',
                     'message': "信道段参数表格格式错误或为空。无法解析频率数据。"
                 })
-            else:
+
+            if not section_format_error:
                 # Assuming only one row for simplicity for now, as per `channel_segment_data`
                 user_row = user_df_value[0]
                 expected_cols = 5  # [名称, 下行始, 下行终, 上行始, 上行终]
 
                 if len(user_row) < expected_cols:
-                    # If user row has too few columns, count errors for missing frequency fields (4 frequency fields)
-                    error_count += 4
+                    error_count += 4  # If user row has too few columns, count errors for missing frequency fields (4 frequency fields)
                     current_section_detailed_errors.append({
                         'section_title': friendly_title,
                         'type': 'column_count_mismatch',
                         'row': 1,
                         'message': f"信道段参数表格第一行列数不足，应至少包含 {expected_cols} 列。",
                         'user_value': str(len(user_row)),
-                        'answer_value': f"至少需要 {max_fillable_col_idx + 1} 列"
+                        'answer_value': f"至少需要 {expected_cols} 列"
                     })
                 else:
                     # Attempt to parse frequencies as floats, handling potential ValueError
@@ -680,7 +683,7 @@ def check_paper(
                             'message': "频率值应为数字，请检查输入。"
                         })
 
-            if frequencies_parsed:
+            if frequencies_parsed:  # Proceed with logic checks only if frequencies were parsed correctly
                 # Define correct ranges and offset based on channel type
                 if user_channel_type == "uu":
                     downlink_min, downlink_max = 12.25, 12.75
@@ -766,46 +769,35 @@ def check_paper(
 
 
         elif config["check_type"] == _CHECK_TYPE_TEXTBOX_AND_DATAFRAME:
-            # For "2.点对点通信参数", we no longer check exact textbox values or dataframe cells.
+            # For "2.点对点通信参数", we no longer check exact textbox values or dataframe cells for precise match.
             # Only apply frequency rule and bandwidth-rate rule.
 
             user_df_value = _df_to_lol(input_values[config["params"][-1]])
             report_headers = config["report_headers"]
 
-            # --- Textbox fields are no longer checked for exact match, but we need to ensure structure for dataframe ---
-            # Original: Compare textbox values first (REMOVED)
-            # user_textbox_values = [input_values[param] for param in config["params"][:-1]]
-            # correct_textbox_answers = config["correct_textbox_answers"]
-            # fields = config["fields"]
-            # for i in range(len(correct_textbox_answers)):
-            #     user_val = str(user_textbox_values[i]).strip()
-            #     correct_val = str(correct_textbox_answers[i]).strip()
-            #     if user_val != correct_val:
-            #         error_count += 1
-            #         current_section_detailed_errors.append({
-            #             'section_title': friendly_title,
-            #             'type': 'textbox',
-            #             'field_label': fields[i],
-            #             'user_value': user_val,
-            #             'answer_value': correct_val
-            #         })
+            # --- Textbox fields (_LOCAL_CC_ADDRESS_LABEL, _REMOTE_XX_ADDRESS_LABEL) ---
+            # No exact content check, but we can check if they are simply empty.
+            # The previous approach used `correct_textbox_answers` which we've removed.
+            # If you want to ensure they are NOT empty, add a simple check here:
+            # For this context, we will simply assume they are user input and not grade them.
+            # So, no error_count increment here for textboxes.
 
             if not isinstance(user_df_value, list) or not all(isinstance(row, list) for row in user_df_value):
-                # If malformed, count as total possible errors for this section (2 rows * 2 checks = 4 errors)
-                error_count += 4
+                section_format_error = True
                 current_section_detailed_errors.append({
                     'section_title': friendly_title,
                     'type': 'dataframe_format_error',
                     'message': "点对点通信参数表格格式错误或无法解析。请确保输入为有效数据。"
                 })
                 # No 'continue' here, as we still want to collect KBP load errors if applicable
-            else:
+
+            if not section_format_error:
                 user_rows = len(user_df_value)
                 # Assuming P2P table should always have 2 rows ("发送", "接收")
                 expected_rows = 2
                 if user_rows != expected_rows:
-                    error_count += abs(
-                        user_rows - expected_rows) * 2  # Roughly 2 errors per missing/extra row for the logic checks
+                    # Penalize for row count mismatch, assuming each row has potential for 2 logic errors
+                    error_count += abs(user_rows - expected_rows) * 2
                     current_section_detailed_errors.append({
                         'section_title': friendly_title,
                         'type': 'row_count_mismatch',
@@ -837,29 +829,49 @@ def check_paper(
                         })
                         continue  # Skip logic checks for this malformed row
 
-                    # NEW: Check for Uplink_End <= Downlink_Start for P2P table
-                    dl_start_val = user_row[p2p_downlink_start_idx]
-                    ul_end_val = user_row[p2p_uplink_end_idx]
+                    # Check for Uplink_End <= Downlink_Start for P2P table
+                    if p2p_downlink_start_idx < len(user_row) and p2p_uplink_end_idx < len(
+                            user_row):  # Ensure indices are valid for the current row
+                        dl_start_val = user_row[p2p_downlink_start_idx]
+                        ul_end_val = user_row[p2p_uplink_end_idx]
 
-                    freq_rel_err_count, freq_rel_detailed_errors = _check_uplink_downlink_frequency_rule(
-                        friendly_title, r + 1,
-                        dl_start_val, ul_end_val,
-                        report_headers[p2p_downlink_start_idx], report_headers[p2p_uplink_end_idx]
-                    )
-                    error_count += freq_rel_err_count
-                    current_section_detailed_errors.extend(freq_rel_detailed_errors)
+                        freq_rel_err_count, freq_rel_detailed_errors = _check_uplink_downlink_frequency_rule(
+                            friendly_title, r + 1,
+                            dl_start_val, ul_end_val,
+                            report_headers[p2p_downlink_start_idx], report_headers[p2p_uplink_end_idx]
+                        )
+                        error_count += freq_rel_err_count
+                        current_section_detailed_errors.extend(freq_rel_detailed_errors)
+                    else:
+                        error_count += 1  # Count as one error for missing freq columns if they should be there
+                        current_section_detailed_errors.append({
+                            'section_title': friendly_title,
+                            'type': 'column_count_mismatch',
+                            'row': r + 1,
+                            'message': f"第 {r + 1} 行频率列缺失，无法进行上行/下行频点逻辑校验。"
+                        })
 
-                    # NEW: Check for Bandwidth >= Required Bandwidth from KBP mapping
-                    user_rate_val = user_row[p2p_rate_idx]
-                    user_bandwidth_val = user_row[p2p_bandwidth_idx]
+                    # Check for Bandwidth >= Required Bandwidth from KBP mapping
+                    if p2p_rate_idx < len(user_row) and p2p_bandwidth_idx < len(
+                            user_row):  # Ensure indices are valid for the current row
+                        user_rate_val = user_row[p2p_rate_idx]
+                        user_bandwidth_val = user_row[p2p_bandwidth_idx]
 
-                    bw_rate_err_count, bw_rate_detailed_errors = _check_bandwidth_vs_rate_rule(
-                        friendly_title, r + 1,
-                        user_rate_val, user_bandwidth_val,
-                        report_headers[p2p_rate_idx], report_headers[p2p_bandwidth_idx]
-                    )
-                    error_count += bw_rate_err_count
-                    current_section_detailed_errors.extend(bw_rate_detailed_errors)
+                        bw_rate_err_count, bw_rate_detailed_errors = _check_bandwidth_vs_rate_rule(
+                            friendly_title, r + 1,
+                            user_rate_val, user_bandwidth_val,
+                            report_headers[p2p_rate_idx], report_headers[p2p_bandwidth_idx]
+                        )
+                        error_count += bw_rate_err_count
+                        current_section_detailed_errors.extend(bw_rate_detailed_errors)
+                    else:
+                        error_count += 1  # Count as one error for missing rate/bandwidth columns
+                        current_section_detailed_errors.append({
+                            'section_title': friendly_title,
+                            'type': 'column_count_mismatch',
+                            'row': r + 1,
+                            'message': f"第 {r + 1} 行速率或带宽列缺失，无法进行带宽速率校验。"
+                        })
 
             # If KBP mapping failed to load, ensure this error is reported once for the section
             # and is not already part of detailed errors from _check_bandwidth_vs_rate_rule calls
@@ -875,15 +887,30 @@ def check_paper(
         else:
             print(
                 f"Warning: Unsupported check type '{config['check_type']}' for section '{friendly_title}'. Cannot count errors.")
-            error_count = "未知错误数"  # Indicate an internal error
+            # For unsupported types, we can add a specific error to detailed_errors
+            current_section_detailed_errors.append({
+                'section_title': friendly_title,
+                'type': 'unsupported_check_type',
+                'message': f"此部分使用了不支持的检查类型 '{config['check_type']}'。"
+            })
+            # We won't try to assign an int error_count here as it's truly unquantifiable by this checker.
+            # It will be handled in the final summary.
 
         # Collect summary errors and detailed errors
-        # Add section to summary only if there were errors detected or if a parsing/format error occurred.
-        if error_count > 0 or (isinstance(error_count, str) and "失败" in error_count):
-            if isinstance(error_count, int):
+        # Add section to summary only if there were errors detected in its `current_section_detailed_errors`
+        # or if `error_count` (for supported, quantifiable errors) is > 0.
+        # This handles format errors and unsupported types that add directly to detailed_errors.
+        if current_section_detailed_errors:  # If any detailed error was recorded for this section
+            # If error_count is quantifiable, use it. Otherwise, count detailed errors.
+            # For 'unsupported_check_type', error_count may be 0 or 'unknown'.
+            # For format errors, error_count may be 0 for this section.
+            if isinstance(error_count, int) and error_count > 0:
                 error_sections_with_counts.append((friendly_title, error_count))
-            else:
+            elif isinstance(error_count, str):  # Handle cases like "未知错误数" directly from this section
                 error_sections_with_counts.append((friendly_title, error_count))
+            else:  # If error_count is 0 but there are detailed errors (e.g., format errors)
+                # Count the number of detailed errors as the error_count for summary
+                error_sections_with_counts.append((friendly_title, len(current_section_detailed_errors)))
 
             if friendly_title not in error_titles_only:
                 error_titles_only.append(friendly_title)
@@ -899,7 +926,7 @@ def check_paper(
             if isinstance(count, int):
                 error_message_string += f"- **{title}**：错误个数：{count}\n"
             else:
-                error_message_string += f"- **{title}**：{count}\n"
+                error_message_string += f"- **{title}**：{count}\n"  # Handle string messages like "格式错误"
 
         if detailed_errors:
             error_message_string += "\n请参考下面的**详细错误列表**查看具体差异。"
