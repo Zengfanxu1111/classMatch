@@ -1,0 +1,39 @@
+--- 试卷填写结果 ---
+
+--- 第一模块 ---
+
+(1) xx参数
+子网编号： test
+网络名称： test
+
+(2) Xxx站配置参数:
+Headers: ['用户单位', '站名', '站型', '站地址', '站位置', '设备序列号']
+Data: [['单位1', 'test', 'test', 'test', 'test', '1111'], ['单位2', 'test', 'test', 'test', 'test', '2222'], ['单位3', 'test', 'test', 'test', 'test', '3333'], ['单位4', 'test', 'test', 'test', 'test', '4444'], ['单位5', 'test', 'test', 'test', 'test', '5555']]
+
+(3) 信道段参数:
+Headers: ['卫星名称', '下行起始频率（khz）', '下行终止频率（khz）', '上行起始频率（khz）', '上行终止频率（khz）']
+Data: [['test', 'test', 'test', 'test', 'test']]
+
+(4) 信道套参数:
+Headers: ['名称', 'TDM', 'ALOHA']
+Data: [['信道段', 'test', 'test'], ['速率', 'test', 'test'], ['中心频点', 'test', 'test'], ['带宽', 'test', 'test']]
+
+--- 第二模块 ---
+
+1.组网参数分析:
+Headers: ['用户单位', '站型', '站地址', 'CC地址', '电话号码', '设备序列号']
+Data: [['单位1', 'test', 'test', 'test', 'test', '1111'], ['单位2', 'test', 'test', 'test', 'test', '2222'], ['单位3', 'test', 'test', 'test', 'test', '3333'], ['单位4', 'test', 'test', 'test', 'test', '4444'], ['单位5', 'test', 'test', 'test', '', '5555']]
+
+2.点对点通信参数:
+本端CC地址: test
+对端XX地址： test
+
+点对点通信参数表:
+Headers: ['名称', '速率kbps', '带宽（khz）', '下行起始频点（khz）', '下行终止频点（khz）', '上行起始频点（khz）', '上行终止频点（khz）']
+Data: [['发送', 'test', 'test', 'test', 'test', 'test', 'test'], ['接收', 'test', 'test', 'test', 'test', 'test', 'test']]
+
+3.虚拟子网参数:
+Headers: ['名称', '带宽（khz）', '下行起始频率（khz）', '下行终止频率（khz）', '上行起始频率（khz）', '上行终止频率（khz）']
+Data: [['虚拟子网信道段', 'test', 'test', 'test', 'test', 'test']]
+
+--- 捕获结束 ---
