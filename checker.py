@@ -113,63 +113,23 @@ _COMPARISON_CONFIG = {
     }
 }
 
-# --- KBP映射全局变量 ---
-_KBP_MAPPING = {}
-_KBP_FILE_LOADED = False
-_KBP_LOAD_ERROR = None  # This will store the error message if loading fails
+# --- KBP映射硬编码 ---
+_KBP_MAPPING = {
+    32: 42,
+    64: 84,
+    128: 168,
+    256: 336,
+    512: 671,
+    1024: 895,
+    2048: 1789,
+}
 
 
-def _load_kbp_mapping():
-    """
-    从kbp.txt文件加载速率与带宽的对应关系。
-    格式: 速率:带宽 (例如: 32:42)
-    """
-    global _KBP_MAPPING, _KBP_FILE_LOADED, _KBP_LOAD_ERROR
-    # Reset states for a fresh load attempt
-    _KBP_MAPPING = {}
-    _KBP_FILE_LOADED = False
-    _KBP_LOAD_ERROR = None
+# KBP映射现在是硬编码，不需要加载文件，所以这些状态变量不再需要
+# _KBP_FILE_LOADED = True # 总是视为已加载
+# _KBP_LOAD_ERROR = None # 总是视为无加载错误
 
-    kbp_file_path = 'kbp.txt'  # Assuming kbp.txt is in the root directory
-    if not os.path.exists(kbp_file_path):
-        _KBP_LOAD_ERROR = f"错误: 缺少kbp.txt文件。请确保文件存在于 {os.getcwd()}。"
-        print(_KBP_LOAD_ERROR)
-        return
-
-    try:
-        temp_mapping = {}
-        with open(kbp_file_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith('#'):  # Skip empty lines and comments
-                    continue
-                try:
-                    rate_str, bandwidth_str = line.split(':')
-                    rate = int(rate_str.strip())
-                    bandwidth = int(bandwidth_str.strip())
-                    temp_mapping[rate] = bandwidth
-                except ValueError:
-                    if _KBP_LOAD_ERROR is None:  # Initialize error string if it's the first error
-                        _KBP_LOAD_ERROR = ""
-                    _KBP_LOAD_ERROR += f"警告: kbp.txt中存在格式错误的行: '{line}'，已跳过。正确格式应为 '速率:带宽' (例如: 32:42)。\n"
-                    print(f"警告: kbp.txt中存在格式错误的行: '{line}'，已跳过。")
-                except Exception as e:
-                    if _KBP_LOAD_ERROR is None:  # Initialize error string if it's the first error
-                        _KBP_LOAD_ERROR = ""
-                    _KBP_LOAD_ERROR += f"警告: 读取kbp.txt时发生未知错误: {e} 在行 '{line}'。\n"
-                    print(f"读取kbp.txt时发生未知错误: {e} 在行 '{line}'。")
-
-        _KBP_MAPPING = temp_mapping
-        _KBP_FILE_LOADED = True
-        if not _KBP_MAPPING and _KBP_LOAD_ERROR is None:  # If file was empty but no parsing errors
-            _KBP_LOAD_ERROR = "警告: kbp.txt文件为空或未包含有效数据。"
-            print(_KBP_LOAD_ERROR)
-
-    except Exception as e:  # Catch file opening errors etc.
-        _KBP_LOAD_ERROR = f"无法读取kbp.txt文件: {e}"
-        _KBP_FILE_LOADED = False  # Indicate that file could not be fully loaded/parsed
-        print(_KBP_LOAD_ERROR)
-
+# 移除 _load_kbp_mapping 函数，因为它不再需要
 
 # --- 函数 1: 捕获用户输入并格式化为字符串 (用于下载，功能不变) ---
 def capture_paper_data_string(
@@ -287,9 +247,14 @@ def _check_uplink_downlink_frequency_rule(section_title, user_row_index,
                 'message': f"上行终止频率 ({ul_end:.2f}khz) 不应大于下行起始频率 ({dl_start:.2f}khz)。"
             })
     except (ValueError, TypeError):
-        # 如果频率值不是有效的数字，这个错误应该由其他类型（如 data_type_error）捕获。
-        # 此处不重复计数，避免双重惩罚。
-        pass
+        # If frequency values are not valid numbers, report as data_type_error
+        error_count += 1
+        errors.append({
+            'section_title': section_title,
+            'type': 'data_type_error',
+            'row': user_row_index,
+            'message': f"频率值 '{downlink_start_freq_val}' 或 '{uplink_end_freq_val}' 应为有效数字，无法进行频点逻辑校验。"
+        })
     return error_count, errors
 
 
@@ -297,7 +262,7 @@ def _check_uplink_downlink_frequency_rule(section_title, user_row_index,
 def _check_bandwidth_vs_rate_rule(section_title, user_row_index, user_rate_val, user_bandwidth_val,
                                   rate_col_header, bandwidth_col_header):
     """
-    检查带宽是否大于等于kbp.txt中对应速率的带宽值。
+    检查带宽是否大于等于硬编码KBP映射中对应速率的带宽值。
     如果发现错误，返回错误个数和详细错误列表。
     Args:
         section_title (str): 错误所属的友好标题。
@@ -312,25 +277,9 @@ def _check_bandwidth_vs_rate_rule(section_title, user_row_index, user_rate_val, 
     errors = []
     error_count = 0
 
-    # 检查KBP文件加载状态
-    if not _KBP_FILE_LOADED:
-        error_count += 1
-        errors.append({
-            'section_title': section_title,
-            'type': 'kbp_load_error',
-            'message': _KBP_LOAD_ERROR if _KBP_LOAD_ERROR else "KBP映射文件未加载或为空，无法进行带宽速率校验。"
-        })
-        return error_count, errors
-
-    # 如果文件加载成功但映射为空（例如文件内容只有注释或无效行）
-    if not _KBP_MAPPING:
-        error_count += 1
-        errors.append({
-            'section_title': section_title,
-            'type': 'kbp_load_error',
-            'message': _KBP_LOAD_ERROR if _KBP_LOAD_ERROR else "KBP映射文件为空或未包含有效数据，无法进行带宽速率校验。"
-        })
-        return error_count, errors
+    # 由于KBP映射是硬编码的，不需要文件加载错误处理。
+    # 如果映射为空，这意味着代码本身有问题，或者我们希望没有映射时也算错误。
+    # 目前假设映射不会为空，且始终有效。
 
     try:
         user_rate = int(str(user_rate_val).strip())
@@ -346,7 +295,7 @@ def _check_bandwidth_vs_rate_rule(section_title, user_row_index, user_rate_val, 
                 'col_header_bandwidth': bandwidth_col_header,
                 'user_value_rate': f"{user_rate}",
                 'user_value_bandwidth': f"{user_bandwidth}",
-                'message': f"速率 '{user_rate}' 在KBP映射文件中未找到对应带宽。请核对速率值。"
+                'message': f"速率 '{user_rate}' 在KBP映射中未找到对应带宽。请核对速率值。"
             })
         else:
             required_bandwidth = _KBP_MAPPING[user_rate]
@@ -364,9 +313,14 @@ def _check_bandwidth_vs_rate_rule(section_title, user_row_index, user_rate_val, 
                     'message': f"带宽 ({user_bandwidth}khz) 小于速率 {user_rate}kbps 对应的最低要求带宽 ({required_bandwidth}khz)。"
                 })
     except (ValueError, TypeError):
-        # 如果速率或带宽值不是有效的数字，这个错误应该由dataframe_cell或data_type_error捕获。
-        # 此处专注于逻辑检查，假设输入类型正确。
-        pass
+        # If rate or bandwidth values are not valid integers, report as data_type_error
+        error_count += 1
+        errors.append({
+            'section_title': section_title,
+            'type': 'data_type_error',
+            'row': user_row_index,
+            'message': f"速率 '{user_rate_val}' 或带宽 '{user_bandwidth_val}' 应为有效数字，无法进行带宽速率校验。"
+        })
     except Exception as e:
         error_count += 1
         errors.append({
@@ -406,8 +360,8 @@ def check_paper(
     error_titles_only = []  # List of titles only for analyzer
     detailed_errors = []  # Stores detailed error information
 
-    # 在检查前先加载KBP映射，确保只加载一次
-    _load_kbp_mapping()
+    # KBP映射现在是硬编码的，不需要文件加载，所以 _load_kbp_mapping() 调用被移除
+    # _load_kbp_mapping()
 
     # Use a dictionary to map param names to actual values passed into this function
     input_values = {
@@ -432,9 +386,9 @@ def check_paper(
         return df_value  # Already a list of lists or None
 
     for friendly_title, config in _COMPARISON_CONFIG.items():
-        error_count = 0
+        current_section_error_count = 0  # Initialize for the current section's quantifiable errors
         current_section_detailed_errors = []  # Errors specific to this section
-        section_format_error = False  # Flag for format errors that prevent detailed counting
+        section_format_error = False  # Flag for format errors that prevent detailed counting or cause full penalty
 
         if config["check_type"] == _CHECK_TYPE_TEXTBOX_GROUP:
             # This type is currently not used in _COMPARISON_CONFIG as (1) and (2) are ignored.
@@ -447,7 +401,7 @@ def check_paper(
                 user_val = str(user_values[i]).strip()
                 correct_val = str(correct_answers[i]).strip()
                 if user_val != correct_val:
-                    error_count += 1
+                    current_section_error_count += 1
                     current_section_detailed_errors.append({
                         'section_title': friendly_title,
                         'type': 'textbox',
@@ -471,8 +425,6 @@ def check_paper(
                     'type': 'dataframe_format_error',
                     'message': "表格格式错误或无法解析。请确保输入为有效数据。"
                 })
-                # We cannot accurately count individual cell errors if format is wrong, so don't increment error_count here yet.
-                # The 'total_items' in radar calculation will account for this as a full penalty.
 
             if not section_format_error:  # Proceed with detailed checks only if basic format is okay
                 user_rows = len(user_df_value)
@@ -483,7 +435,7 @@ def check_paper(
                     # Calculate errors for missing/extra rows.
                     # For score calculation, each 'missing' fillable cell is an error.
                     if user_rows < correct_rows:
-                        error_count += (correct_rows - user_rows) * len(fillable_cols_indices)
+                        current_section_error_count += (correct_rows - user_rows) * len(fillable_cols_indices)
                     elif user_rows > correct_rows:  # Penalize extra rows for simplicity, or just ignore them
                         # For now, let's just count errors for expected missing data, not extra input.
                         # Can be refined based on exact grading policy.
@@ -511,7 +463,7 @@ def check_paper(
                     if len(user_row) <= max_expected_col_idx:
                         # If user row has too few columns, count errors for missing fillable cells *in this row*
                         missing_cols_in_row = len([idx for idx in fillable_cols_indices if idx > len(user_row) - 1])
-                        error_count += missing_cols_in_row
+                        current_section_error_count += missing_cols_in_row
                         current_section_detailed_errors.append({
                             'section_title': friendly_title,
                             'type': 'column_count_mismatch',
@@ -534,7 +486,7 @@ def check_paper(
                         correct_val = str(correct_values[r][correct_val_relative_idx]).strip()
 
                         if user_val != correct_val:
-                            error_count += 1
+                            current_section_error_count += 1
                             col_header_display = report_headers[c_idx] if c_idx < len(
                                 report_headers) else f"列 {c_idx + 1}"
                             current_section_detailed_errors.append({
@@ -561,7 +513,7 @@ def check_paper(
                             report_headers[virtual_subnet_downlink_start_idx],
                             report_headers[virtual_subnet_uplink_end_idx]
                         )
-                        error_count += freq_rel_err_count
+                        current_section_error_count += freq_rel_err_count
                         current_section_detailed_errors.extend(freq_rel_detailed_errors)
 
         elif config["check_type"] == _CHECK_TYPE_DATAFRAME_COLUMN_DUPLICATE:
@@ -596,7 +548,7 @@ def check_paper(
                         # If a row is too short to contain the CC address, it's a format error for that cell.
                         # This isn't strictly a "duplicate" error, but rather a missing data error.
                         # We can log it as a column_count_mismatch for completeness.
-                        error_count += 1  # Count as one error for this row's missing data
+                        current_section_error_count += 1  # Count as one error for this row's missing data
                         current_section_detailed_errors.append({
                             'section_title': friendly_title,
                             'type': 'column_count_mismatch',
@@ -606,7 +558,7 @@ def check_paper(
 
                 # Count errors for each duplicate occurrence (excluding the first instance)
                 for value, row_indices in duplicate_rows_map.items():
-                    error_count += len(row_indices)  # Each entry in row_indices is a duplicate
+                    current_section_error_count += len(row_indices)  # Each entry in row_indices is a duplicate
                     col_header_display = report_headers[col_to_check_idx] if col_to_check_idx < len(
                         report_headers) else f"列 {col_to_check_idx + 1}"
 
@@ -630,7 +582,7 @@ def check_paper(
             # Check Dropdown (Requirement 1 & 2 indirectly relates to channel_type)
             correct_dropdown_val = str(config["correct_dropdown_value"]).strip()
             if user_channel_type != correct_dropdown_val:
-                error_count += 1
+                current_section_error_count += 1
                 current_section_detailed_errors.append({
                     'section_title': friendly_title,
                     'type': 'dropdown',
@@ -658,7 +610,7 @@ def check_paper(
                 expected_cols = 5  # [名称, 下行始, 下行终, 上行始, 上行终]
 
                 if len(user_row) < expected_cols:
-                    error_count += 4  # If user row has too few columns, count errors for missing frequency fields (4 frequency fields)
+                    current_section_error_count += 4  # If user row has too few columns, count errors for missing frequency fields (4 frequency fields)
                     current_section_detailed_errors.append({
                         'section_title': friendly_title,
                         'type': 'column_count_mismatch',
@@ -676,7 +628,7 @@ def check_paper(
                         user_uplink_end = float(str(user_row[4]).strip())
                         frequencies_parsed = True
                     except (ValueError, TypeError):
-                        error_count += 4  # If any parsing fails, count all 4 frequencies as errors
+                        current_section_error_count += 4  # If any parsing fails, count all 4 frequencies as errors
                         current_section_detailed_errors.append({
                             'section_title': friendly_title,
                             'type': 'data_type_error',
@@ -695,7 +647,7 @@ def check_paper(
                     offset = 9.8
                 else:
                     # If channel type is still invalid despite dropdown check, cannot perform logical checks
-                    error_count += 4  # Count 4 freq errors if type is not recognized for logic
+                    current_section_error_count += 4  # Count 4 freq errors if type is not recognized for logic
                     current_section_detailed_errors.append({
                         'section_title': friendly_title,
                         'type': 'logic_check_failed',
@@ -706,7 +658,7 @@ def check_paper(
                 if frequencies_parsed:  # Re-check if we can proceed after type validation
                     # Requirement 1: Downlink Frequency Range
                     if not (downlink_min <= user_downlink_start <= downlink_max):
-                        error_count += 1
+                        current_section_error_count += 1
                         current_section_detailed_errors.append({
                             'section_title': friendly_title, 'type': 'dataframe_cell', 'row': 1, 'col': 2,
                             'col_header': report_headers[1],
@@ -714,7 +666,7 @@ def check_paper(
                             'answer_value': f"{user_channel_type} 模式下，下行起始频率应在 {downlink_min}-{downlink_max} 范围内"
                         })
                     if not (downlink_min <= user_downlink_end <= downlink_max):
-                        error_count += 1
+                        current_section_error_count += 1
                         current_section_detailed_errors.append({
                             'section_title': friendly_title, 'type': 'dataframe_cell', 'row': 1, 'col': 3,
                             'col_header': report_headers[2],
@@ -724,7 +676,7 @@ def check_paper(
 
                     # Requirement 2: Uplink Frequency Range
                     if not (uplink_min <= user_uplink_start <= uplink_max):
-                        error_count += 1
+                        current_section_error_count += 1
                         current_section_detailed_errors.append({
                             'section_title': friendly_title, 'type': 'dataframe_cell', 'row': 1, 'col': 4,
                             'col_header': report_headers[3],
@@ -732,7 +684,7 @@ def check_paper(
                             'answer_value': f"{user_channel_type} 模式下，上行起始频率应在 {uplink_min}-{uplink_max} 范围内"
                         })
                     if not (uplink_min <= user_uplink_end <= uplink_max):
-                        error_count += 1
+                        current_section_error_count += 1
                         current_section_detailed_errors.append({
                             'section_title': friendly_title, 'type': 'dataframe_cell', 'row': 1, 'col': 5,
                             'col_header': report_headers[4],
@@ -742,7 +694,7 @@ def check_paper(
 
                     # Requirement 3: Uplink-Downlink Relationship
                     if not (abs(user_uplink_start - (user_downlink_start + offset)) < tolerance):
-                        error_count += 1
+                        current_section_error_count += 1
                         current_section_detailed_errors.append({
                             'section_title': friendly_title, 'type': 'logic_check_failed', 'row': 1, 'col': 4,
                             'col_header': report_headers[3],
@@ -750,7 +702,7 @@ def check_paper(
                             'answer_value': f"{user_channel_type} 模式下，上行起始频率应为 下行起始频率+{offset:.2f}"
                         })
                     if not (abs(user_uplink_end - (user_downlink_end + offset)) < tolerance):
-                        error_count += 1
+                        current_section_error_count += 1
                         current_section_detailed_errors.append({
                             'section_title': friendly_title, 'type': 'logic_check_failed', 'row': 1, 'col': 5,
                             'col_header': report_headers[4],
@@ -764,7 +716,7 @@ def check_paper(
                         user_downlink_start, user_uplink_end,
                         report_headers[1], report_headers[4]  # Headers for Downlink Start and Uplink End
                     )
-                    error_count += freq_rel_err_count
+                    current_section_error_count += freq_rel_err_count
                     current_section_detailed_errors.extend(freq_rel_detailed_errors)
 
 
@@ -789,7 +741,6 @@ def check_paper(
                     'type': 'dataframe_format_error',
                     'message': "点对点通信参数表格格式错误或无法解析。请确保输入为有效数据。"
                 })
-                # No 'continue' here, as we still want to collect KBP load errors if applicable
 
             if not section_format_error:
                 user_rows = len(user_df_value)
@@ -797,7 +748,7 @@ def check_paper(
                 expected_rows = 2
                 if user_rows != expected_rows:
                     # Penalize for row count mismatch, assuming each row has potential for 2 logic errors
-                    error_count += abs(user_rows - expected_rows) * 2
+                    current_section_error_count += abs(user_rows - expected_rows) * 2
                     current_section_detailed_errors.append({
                         'section_title': friendly_title,
                         'type': 'row_count_mismatch',
@@ -820,7 +771,8 @@ def check_paper(
                     min_cols_needed = max(p2p_rate_idx, p2p_bandwidth_idx, p2p_downlink_start_idx,
                                           p2p_uplink_end_idx) + 1
                     if len(user_row) < min_cols_needed:
-                        error_count += 2  # Two logic checks might fail for this row
+                        # This means essential columns are missing for logic checks
+                        current_section_error_count += 2  # Assume both logic checks for this row would fail
                         current_section_detailed_errors.append({
                             'section_title': friendly_title,
                             'type': 'column_count_mismatch',
@@ -830,8 +782,8 @@ def check_paper(
                         continue  # Skip logic checks for this malformed row
 
                     # Check for Uplink_End <= Downlink_Start for P2P table
-                    if p2p_downlink_start_idx < len(user_row) and p2p_uplink_end_idx < len(
-                            user_row):  # Ensure indices are valid for the current row
+                    # Ensure indices are valid for the current row's actual length before accessing
+                    if p2p_downlink_start_idx < len(user_row) and p2p_uplink_end_idx < len(user_row):
                         dl_start_val = user_row[p2p_downlink_start_idx]
                         ul_end_val = user_row[p2p_uplink_end_idx]
 
@@ -840,10 +792,10 @@ def check_paper(
                             dl_start_val, ul_end_val,
                             report_headers[p2p_downlink_start_idx], report_headers[p2p_uplink_end_idx]
                         )
-                        error_count += freq_rel_err_count
+                        current_section_error_count += freq_rel_err_count
                         current_section_detailed_errors.extend(freq_rel_detailed_errors)
                     else:
-                        error_count += 1  # Count as one error for missing freq columns if they should be there
+                        current_section_error_count += 1  # Count as one error for missing freq columns if they should be there
                         current_section_detailed_errors.append({
                             'section_title': friendly_title,
                             'type': 'column_count_mismatch',
@@ -852,8 +804,8 @@ def check_paper(
                         })
 
                     # Check for Bandwidth >= Required Bandwidth from KBP mapping
-                    if p2p_rate_idx < len(user_row) and p2p_bandwidth_idx < len(
-                            user_row):  # Ensure indices are valid for the current row
+                    # Ensure indices are valid for the current row's actual length before accessing
+                    if p2p_rate_idx < len(user_row) and p2p_bandwidth_idx < len(user_row):
                         user_rate_val = user_row[p2p_rate_idx]
                         user_bandwidth_val = user_row[p2p_bandwidth_idx]
 
@@ -862,10 +814,10 @@ def check_paper(
                             user_rate_val, user_bandwidth_val,
                             report_headers[p2p_rate_idx], report_headers[p2p_bandwidth_idx]
                         )
-                        error_count += bw_rate_err_count
+                        current_section_error_count += bw_rate_err_count
                         current_section_detailed_errors.extend(bw_rate_detailed_errors)
                     else:
-                        error_count += 1  # Count as one error for missing rate/bandwidth columns
+                        current_section_error_count += 1  # Count as one error for missing rate/bandwidth columns
                         current_section_detailed_errors.append({
                             'section_title': friendly_title,
                             'type': 'column_count_mismatch',
@@ -873,15 +825,15 @@ def check_paper(
                             'message': f"第 {r + 1} 行速率或带宽列缺失，无法进行带宽速率校验。"
                         })
 
-            # If KBP mapping failed to load, ensure this error is reported once for the section
-            # and is not already part of detailed errors from _check_bandwidth_vs_rate_rule calls
-            if _KBP_LOAD_ERROR and not any(d.get('type') == 'kbp_load_error' for d in current_section_detailed_errors):
-                error_count += 1  # Add one general error for KBP load failure
-                current_section_detailed_errors.append({
-                    'section_title': friendly_title,
-                    'type': 'kbp_load_error',
-                    'message': _KBP_LOAD_ERROR  # Use the global error message
-                })
+            # Since KBP is hardcoded, no kbp_load_error is possible for this check type anymore.
+            # This 'if' block is removed.
+            # if _KBP_LOAD_ERROR and not any(d.get('type') == 'kbp_load_error' for d in current_section_detailed_errors):
+            #     current_section_error_count += 1 # Add one general error for KBP load failure
+            #     current_section_detailed_errors.append({
+            #         'section_title': friendly_title,
+            #         'type': 'kbp_load_error',
+            #         'message': _KBP_LOAD_ERROR # Use the global error message
+            #     })
 
 
         else:
@@ -893,24 +845,13 @@ def check_paper(
                 'type': 'unsupported_check_type',
                 'message': f"此部分使用了不支持的检查类型 '{config['check_type']}'。"
             })
-            # We won't try to assign an int error_count here as it's truly unquantifiable by this checker.
-            # It will be handled in the final summary.
+            # Do not assign to current_section_error_count here, let `len(current_section_detailed_errors)` cover it.
 
         # Collect summary errors and detailed errors
-        # Add section to summary only if there were errors detected in its `current_section_detailed_errors`
-        # or if `error_count` (for supported, quantifiable errors) is > 0.
-        # This handles format errors and unsupported types that add directly to detailed_errors.
-        if current_section_detailed_errors:  # If any detailed error was recorded for this section
-            # If error_count is quantifiable, use it. Otherwise, count detailed errors.
-            # For 'unsupported_check_type', error_count may be 0 or 'unknown'.
-            # For format errors, error_count may be 0 for this section.
-            if isinstance(error_count, int) and error_count > 0:
-                error_sections_with_counts.append((friendly_title, error_count))
-            elif isinstance(error_count, str):  # Handle cases like "未知错误数" directly from this section
-                error_sections_with_counts.append((friendly_title, error_count))
-            else:  # If error_count is 0 but there are detailed errors (e.g., format errors)
-                # Count the number of detailed errors as the error_count for summary
-                error_sections_with_counts.append((friendly_title, len(current_section_detailed_errors)))
+        # If there are any detailed errors for this section, add it to the summary.
+        # The 'count' in the summary will be the number of detailed errors found.
+        if current_section_detailed_errors:
+            error_sections_with_counts.append((friendly_title, len(current_section_detailed_errors)))
 
             if friendly_title not in error_titles_only:
                 error_titles_only.append(friendly_title)
@@ -923,10 +864,8 @@ def check_paper(
     else:
         error_message_string = "以下部分填写有误：\n\n"
         for title, count in error_sections_with_counts:
-            if isinstance(count, int):
-                error_message_string += f"- **{title}**：错误个数：{count}\n"
-            else:
-                error_message_string += f"- **{title}**：{count}\n"  # Handle string messages like "格式错误"
+            # Here, 'count' will always be an int (len(current_section_detailed_errors))
+            error_message_string += f"- **{title}**：错误个数：{count}\n"
 
         if detailed_errors:
             error_message_string += "\n请参考下面的**详细错误列表**查看具体差异。"
