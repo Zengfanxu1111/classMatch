@@ -38,15 +38,16 @@ _NETWORK_ANALYSIS_HEADERS = ["用户单位", "站型", "站地址", "CC地址", 
 # _NETWORK_ANALYSIS_FILLABLE_COLS_INDICES = [1, 2, 3, 4] # 不再需要这个用于计分
 
 # 2.点对点通信参数
-# _CORRECT_LOCAL_CC_ADDRESS = "192.168.1.100" # 移除
-# _CORRECT_REMOTE_XX_ADDRESS = "10.0.0.1" # 移除
-# _CORRECT_P2P_VALUES = [ # 移除
-#     ["发送", "1024", "2000", "1000", "2000", "3000", "4000"],
-#     ["接收", "512", "1000", "5000", "6000", "7000", "8000"],
-# ]
+# IMPORTANT: Correct answers for specific values are NOT defined here, as they are no longer checked for exact match.
+# Only KBP and frequency relationship rules apply.
+# _CORRECT_LOCAL_CC_ADDRESS and _CORRECT_REMOTE_XX_ADDRESS are KEPT as placeholders,
+# but their comparison logic is removed in check_paper for this section.
+_CORRECT_LOCAL_CC_ADDRESS = "192.168.1.100"  # Placeholder, no longer checked for exact match
+_CORRECT_REMOTE_XX_ADDRESS = "10.0.0.1"  # Placeholder, no longer checked for exact match
+
 _P2P_HEADERS = ["名称", "速率kbps", "带宽（khz）", "下行起始频点（khz）", "下行终止频点（khz）", "上行起始频点（khz）",
                 "上行终止频点（khz）"]
-# _P2P_FILLABLE_COLS_INDICES = [1, 2, 3, 4, 5, 6] # 移除精确匹配，但保留索引用于获取速率和带宽
+# Column indices for P2P table values that are relevant for new logic checks
 _P2P_RATE_COL_INDEX = 1
 _P2P_BANDWIDTH_COL_INDEX = 2
 _P2P_DOWNLINK_START_COL_INDEX = 3
@@ -64,9 +65,8 @@ _VIRTUAL_SUBNET_FILLABLE_COLS_INDICES = [1, 2, 3, 4, 5]  # Excluding "名称" co
 _CHECK_TYPE_TEXTBOX_GROUP = "textbox_group"
 _CHECK_TYPE_DATAFRAME = "dataframe"
 _CHECK_TYPE_CHANNEL_FREQUENCY_LOGIC = "channel_frequency_logic"
-_CHECK_TYPE_TEXTBOX_AND_DATAFRAME = "textbox_and_dataframe"
+_CHECK_TYPE_TEXTBOX_AND_DATAFRAME = "textbox_and_dataframe"  # This type is reused for P2P but with modified logic
 _CHECK_TYPE_DATAFRAME_COLUMN_DUPLICATE = "dataframe_column_duplicate_check"  # 新增的检查类型
-_CHECK_TYPE_P2P_BANDWIDTH_ONLY = "p2p_bandwidth_only_check"  # 新增的点对点带宽速率专属检查类型
 
 # --- 用于比较的逻辑段落配置 (移除了 (1) 和 (2) 部分) ---
 _COMPARISON_CONFIG = {
@@ -95,10 +95,15 @@ _COMPARISON_CONFIG = {
         # 不再需要 correct_values 和 fillable_cols_indices
     },
     "2.点对点通信参数": {
-        "check_type": _CHECK_TYPE_P2P_BANDWIDTH_ONLY,  # 更改为新的专属检查类型
+        "check_type": _CHECK_TYPE_TEXTBOX_AND_DATAFRAME,  # Revert to this type, but modify its logic
+        "fields": [_LOCAL_CC_ADDRESS_LABEL, _REMOTE_XX_ADDRESS_LABEL],  # Keep for parsing, but not for exact check
+        "correct_textbox_answers": [_CORRECT_LOCAL_CC_ADDRESS, _CORRECT_REMOTE_XX_ADDRESS],
+        # Keep as placeholders, not for exact check
         "report_headers": _P2P_HEADERS,
-        # 不再需要 correct_textbox_answers 和 correct_dataframe_values
-        "params": ["local_cc_address_value", "remote_xx_address_value", "p2p_value"]  # 仍然需要这些参数来获取用户输入，但不会精确校验它们
+        # No correct_dataframe_values needed for exact match
+        "fillable_cols_indices": _P2P_FILLABLE_COLS_INDICES,
+        # Keep for consistency in structure checks if needed, but not for exact cell matching
+        "params": ["local_cc_address_value", "remote_xx_address_value", "p2p_value"]
     },
     "3.虚拟子网参数": {
         "check_type": _CHECK_TYPE_DATAFRAME,
@@ -112,7 +117,7 @@ _COMPARISON_CONFIG = {
 # --- KBP映射全局变量 ---
 _KBP_MAPPING = {}
 _KBP_FILE_LOADED = False
-_KBP_LOAD_ERROR = None
+_KBP_LOAD_ERROR = None  # This will store the error message if loading fails
 
 
 def _load_kbp_mapping():
@@ -121,10 +126,10 @@ def _load_kbp_mapping():
     格式: 速率:带宽 (例如: 32:42)
     """
     global _KBP_MAPPING, _KBP_FILE_LOADED, _KBP_LOAD_ERROR
-    # 重置错误状态，确保每次加载都是新的尝试
-    _KBP_LOAD_ERROR = None
-    _KBP_FILE_LOADED = False
+    # Reset states for a fresh load attempt
     _KBP_MAPPING = {}
+    _KBP_FILE_LOADED = False
+    _KBP_LOAD_ERROR = None
 
     kbp_file_path = 'kbp.txt'  # Assuming kbp.txt is in the root directory
     if not os.path.exists(kbp_file_path):
@@ -145,26 +150,25 @@ def _load_kbp_mapping():
                     bandwidth = int(bandwidth_str.strip())
                     temp_mapping[rate] = bandwidth
                 except ValueError:
-                    # Collect parsing errors, but don't stop loading if other lines are valid
-                    if _KBP_LOAD_ERROR is None:  # Only set error if no critical error yet
+                    if _KBP_LOAD_ERROR is None:  # Initialize error string if it's the first error
                         _KBP_LOAD_ERROR = ""
                     _KBP_LOAD_ERROR += f"警告: kbp.txt中存在格式错误的行: '{line}'，已跳过。正确格式应为 '速率:带宽' (例如: 32:42)。\n"
                     print(f"警告: kbp.txt中存在格式错误的行: '{line}'，已跳过。")
                 except Exception as e:
-                    if _KBP_LOAD_ERROR is None:  # Only set error if no critical error yet
+                    if _KBP_LOAD_ERROR is None:  # Initialize error string if it's the first error
                         _KBP_LOAD_ERROR = ""
                     _KBP_LOAD_ERROR += f"警告: 读取kbp.txt时发生未知错误: {e} 在行 '{line}'。\n"
                     print(f"读取kbp.txt时发生未知错误: {e} 在行 '{line}'。")
 
-        _KBP_MAPPING = temp_mapping  # Only update if parsing was attempted
-        _KBP_FILE_LOADED = True  # Even if warnings, file was processed
-        if not _KBP_MAPPING and _KBP_LOAD_ERROR is None:  # If file was readable but ended up empty with no errors
+        _KBP_MAPPING = temp_mapping
+        _KBP_FILE_LOADED = True
+        if not _KBP_MAPPING and _KBP_LOAD_ERROR is None:  # If file was empty but no parsing errors
             _KBP_LOAD_ERROR = "警告: kbp.txt文件为空或未包含有效数据。"
             print(_KBP_LOAD_ERROR)
 
-    except Exception as e:
+    except Exception as e:  # Catch file opening errors etc.
         _KBP_LOAD_ERROR = f"无法读取kbp.txt文件: {e}"
-        _KBP_FILE_LOADED = False
+        _KBP_FILE_LOADED = False  # Indicate that file could not be fully loaded/parsed
         print(_KBP_LOAD_ERROR)
 
 
@@ -499,11 +503,8 @@ def check_paper(
 
             # Identify frequency columns for Virtual Subnet table (if applicable)
             # This is for "3.虚拟子网参数" specifically
-            virtual_subnet_downlink_start_idx = -1
-            virtual_subnet_uplink_end_idx = -1
-            if friendly_title == "3.虚拟子网参数":
-                virtual_subnet_downlink_start_idx = 2  # "下行起始频率（khz）"
-                virtual_subnet_uplink_end_idx = 5  # "上行终止频率（khz）"
+            virtual_subnet_downlink_start_idx = 2
+            virtual_subnet_uplink_end_idx = 5
 
             for r in range(rows_to_compare):
                 user_row = user_df_value[r]
@@ -549,8 +550,7 @@ def check_paper(
 
                 # NEW: Check for Uplink_End <= Downlink_Start for "3.虚拟子网参数"
                 if friendly_title == "3.虚拟子网参数" and \
-                        len(user_row) > max(virtual_subnet_downlink_start_idx, virtual_subnet_uplink_end_idx) and \
-                        virtual_subnet_downlink_start_idx != -1 and virtual_subnet_uplink_end_idx != -1:
+                        len(user_row) > max(virtual_subnet_downlink_start_idx, virtual_subnet_uplink_end_idx):
                     dl_start_val = user_row[virtual_subnet_downlink_start_idx]
                     ul_end_val = user_row[virtual_subnet_uplink_end_idx]
 
@@ -764,15 +764,35 @@ def check_paper(
                     error_count += freq_rel_err_count
                     current_section_detailed_errors.extend(freq_rel_detailed_errors)
 
-        # NEW: Custom check for "2.点对点通信参数"
-        elif config["check_type"] == _CHECK_TYPE_P2P_BANDWIDTH_ONLY:
-            user_p2p_df_value = _df_to_lol(input_values[config["params"][-1]])
-            p2p_report_headers = config["report_headers"]
 
-            # Validate basic dataframe structure
-            if not isinstance(user_p2p_df_value, list) or not all(isinstance(row, list) for row in user_p2p_df_value):
-                # If malformed, count as total possible errors for this section (2 rows * 1 check = 2 errors)
-                error_count += 2
+        elif config["check_type"] == _CHECK_TYPE_TEXTBOX_AND_DATAFRAME:
+            # For "2.点对点通信参数", we no longer check exact textbox values or dataframe cells.
+            # Only apply frequency rule and bandwidth-rate rule.
+
+            user_df_value = _df_to_lol(input_values[config["params"][-1]])
+            report_headers = config["report_headers"]
+
+            # --- Textbox fields are no longer checked for exact match, but we need to ensure structure for dataframe ---
+            # Original: Compare textbox values first (REMOVED)
+            # user_textbox_values = [input_values[param] for param in config["params"][:-1]]
+            # correct_textbox_answers = config["correct_textbox_answers"]
+            # fields = config["fields"]
+            # for i in range(len(correct_textbox_answers)):
+            #     user_val = str(user_textbox_values[i]).strip()
+            #     correct_val = str(correct_textbox_answers[i]).strip()
+            #     if user_val != correct_val:
+            #         error_count += 1
+            #         current_section_detailed_errors.append({
+            #             'section_title': friendly_title,
+            #             'type': 'textbox',
+            #             'field_label': fields[i],
+            #             'user_value': user_val,
+            #             'answer_value': correct_val
+            #         })
+
+            if not isinstance(user_df_value, list) or not all(isinstance(row, list) for row in user_df_value):
+                # If malformed, count as total possible errors for this section (2 rows * 2 checks = 4 errors)
+                error_count += 4
                 current_section_detailed_errors.append({
                     'section_title': friendly_title,
                     'type': 'dataframe_format_error',
@@ -780,32 +800,69 @@ def check_paper(
                 })
                 # No 'continue' here, as we still want to collect KBP load errors if applicable
             else:
-                # Iterate through each row to check bandwidth vs rate
-                for r_idx, row_data in enumerate(user_p2p_df_value):
-                    # Ensure row has enough columns for rate and bandwidth indices
-                    if len(row_data) > max(_P2P_RATE_COL_INDEX, _P2P_BANDWIDTH_COL_INDEX):
-                        user_rate_val = row_data[_P2P_RATE_COL_INDEX]
-                        user_bandwidth_val = row_data[_P2P_BANDWIDTH_COL_INDEX]
+                user_rows = len(user_df_value)
+                # Assuming P2P table should always have 2 rows ("发送", "接收")
+                expected_rows = 2
+                if user_rows != expected_rows:
+                    error_count += abs(
+                        user_rows - expected_rows) * 2  # Roughly 2 errors per missing/extra row for the logic checks
+                    current_section_detailed_errors.append({
+                        'section_title': friendly_title,
+                        'type': 'row_count_mismatch',
+                        'message': f"表格行数不匹配: 您的表格有 {user_rows} 行，应有 {expected_rows} 行。",
+                        'user_value': str(user_rows),
+                        'answer_value': str(expected_rows)
+                    })
+                rows_to_compare = min(user_rows, expected_rows)
 
-                        # Perform the bandwidth vs rate check
-                        bw_rate_err_count, bw_rate_detailed_errors = _check_bandwidth_vs_rate_rule(
-                            friendly_title, r_idx + 1,
-                            user_rate_val, user_bandwidth_val,
-                            p2p_report_headers[_P2P_RATE_COL_INDEX], p2p_report_headers[_P2P_BANDWIDTH_COL_INDEX]
-                        )
-                        error_count += bw_rate_err_count
-                        current_section_detailed_errors.extend(bw_rate_detailed_errors)
-                    else:
-                        # If a row is too short to contain rate/bandwidth, it's a structural error
-                        error_count += 1  # Count as one error for this row's missing data
+                # Identify relevant column indices for P2P table
+                # _P2P_HEADERS: ["名称", "速率kbps", "带宽（khz）", "下行起始频点（khz）", "下行终止频点（khz）", "上行起始频点（khz）", "上行终止频点（khz）"]
+                p2p_rate_idx = _P2P_RATE_COL_INDEX
+                p2p_bandwidth_idx = _P2P_BANDWIDTH_COL_INDEX
+                p2p_downlink_start_idx = _P2P_DOWNLINK_START_COL_INDEX
+                p2p_uplink_end_idx = _P2P_UPLINK_END_COL_INDEX
+
+                for r in range(rows_to_compare):
+                    user_row = user_df_value[r]
+                    # Check for minimum number of columns to contain all relevant data
+                    min_cols_needed = max(p2p_rate_idx, p2p_bandwidth_idx, p2p_downlink_start_idx,
+                                          p2p_uplink_end_idx) + 1
+                    if len(user_row) < min_cols_needed:
+                        error_count += 2  # Two logic checks might fail for this row
                         current_section_detailed_errors.append({
                             'section_title': friendly_title,
                             'type': 'column_count_mismatch',
-                            'row': r_idx + 1,
-                            'message': f"第 {r_idx + 1} 行列数不足，缺少速率或带宽列，无法进行带宽速率校验。"
+                            'row': r + 1,
+                            'message': f"第 {r + 1} 行列数不足，缺少必要的频率或带宽/速率列，无法进行校验。"
                         })
+                        continue  # Skip logic checks for this malformed row
+
+                    # NEW: Check for Uplink_End <= Downlink_Start for P2P table
+                    dl_start_val = user_row[p2p_downlink_start_idx]
+                    ul_end_val = user_row[p2p_uplink_end_idx]
+
+                    freq_rel_err_count, freq_rel_detailed_errors = _check_uplink_downlink_frequency_rule(
+                        friendly_title, r + 1,
+                        dl_start_val, ul_end_val,
+                        report_headers[p2p_downlink_start_idx], report_headers[p2p_uplink_end_idx]
+                    )
+                    error_count += freq_rel_err_count
+                    current_section_detailed_errors.extend(freq_rel_detailed_errors)
+
+                    # NEW: Check for Bandwidth >= Required Bandwidth from KBP mapping
+                    user_rate_val = user_row[p2p_rate_idx]
+                    user_bandwidth_val = user_row[p2p_bandwidth_idx]
+
+                    bw_rate_err_count, bw_rate_detailed_errors = _check_bandwidth_vs_rate_rule(
+                        friendly_title, r + 1,
+                        user_rate_val, user_bandwidth_val,
+                        report_headers[p2p_rate_idx], report_headers[p2p_bandwidth_idx]
+                    )
+                    error_count += bw_rate_err_count
+                    current_section_detailed_errors.extend(bw_rate_detailed_errors)
 
             # If KBP mapping failed to load, ensure this error is reported once for the section
+            # and is not already part of detailed errors from _check_bandwidth_vs_rate_rule calls
             if _KBP_LOAD_ERROR and not any(d.get('type') == 'kbp_load_error' for d in current_section_detailed_errors):
                 error_count += 1  # Add one general error for KBP load failure
                 current_section_detailed_errors.append({

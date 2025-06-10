@@ -178,8 +178,6 @@ network_analysis_data = [
     ["单位3", "", "", "", "", "3333"],
     ["单位4", "", "", "", "", "4444"],
     ["单位5", "", "", "", "", "5555"],
-    ["单位6", "", "", "", "", "4444"],
-    ["单位7", "", "", "", "", "5555"],
 ]
 
 # 2.Point-to-Point Communication Parameters
@@ -229,8 +227,7 @@ def _calculate_radar_data(error_sections_with_counts, peer_review_score):
         "组网信息分析": {"full_title": "组网信息分析（站型、站地址、CC地址、电话号码）", "total_items": 5,
                          # ***修改点***：总项数改为5，与CC地址列行数一致 (5 rows, each CC address is a potential error)
                          "original_titles": ["1.组网参数分析"]},
-        "点对点业务参数": {"full_title": "点对点业务参数配置（本端/对端地址、速率、带宽、频率）", "total_items": 2, # CHANGED: Now only 2 points for bandwidth/rate check
-                           # Only 2 rows * 1 check (bandwidth vs rate) = 2 potential errors.
+        "点对点业务参数": {"full_title": "点对点业务参数配置（本端/对端地址、速率、带宽、频率）", "total_items": 4, # CHANGED: 2 rows * (1 bandwidth rule + 1 freq rule) = 4 errors
                            "original_titles": ["2.点对点通信参数"]},
         "虚拟子网参数": {"full_title": "虚拟子网参数配置（带宽、频率）", "total_items": 6,
                          # 1 row * 5 fillable cols = 5.
@@ -929,7 +926,7 @@ with gr.Blocks(css=custom_css) as demo:
                         "信道规划模拟",
                         variant="secondary",  # 可以是 primary 或 secondary
                         link="/static/slide.html",
-                        # target="_blank", # <--- 这一行被移除
+                        # target="_blank", # <---这一行被移除
                         elem_id="channel-planning-button"  # 确保CSS能选择到它
                     )
                     gr.Markdown("---")  # 在两个按钮之间加一个分隔线或一些间距
@@ -942,7 +939,7 @@ with gr.Blocks(css=custom_css) as demo:
                             # 将检查结果、详细错误、能力分析报告和学习路线放入Tabs组件
                             with gr.Tabs() as results_tabs:
                                 # Apply elem_classes for font size adjustment
-                                with gr.Tab("答卷检查结果 (汇总)"):
+                                with gr.Tab("答卷填写与分析 (汇总)"): # Renamed tab title
                                     check_result_output_md = gr.Markdown("点击提交按钮进行检查...",
                                                                          elem_classes=["output-text"])
                                 with gr.Tab("详细错误列表"):
@@ -1051,7 +1048,7 @@ with gr.Blocks(css=custom_css) as demo:
     overall_radar_button.click(
         fn=view_overall_radar,
         inputs=[],
-        outputs=[comparison_radar_display, selected_student_info_md, growth_radar_button] # FIXED: Changed growth_button_update to growth_radar_button
+        outputs=[comparison_radar_display, selected_student_info_md, growth_radar_button]
     )
 
     # NEW Event: View student's growth history radar
