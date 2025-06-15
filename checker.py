@@ -1,10 +1,8 @@
-# checker.py
-
 import io
 import sys
 import os
 import pandas as pd
-from collections import defaultdict  # Import defaultdict for duplicate checking
+from collections import defaultdict
 
 # --- 静态标签定义 (用于生成输出字符串，确保与主文件界面上的标签一致) ---
 _SUBNET_ID_LABEL = "子网编号："
@@ -22,15 +20,11 @@ _CHANNEL_SEGMENT_HEADERS = ["卫星名称", "下行起始频率（khz）", "下�
 _CHANNEL_SEGMENT_FILLABLE_COLS_INDICES = [1, 2, 3, 4]  # Assuming 卫星名称是预填的，用户填写频率
 _CORRECT_CHANNEL_TYPE = "uu"  # 假设正确的信道类型是 "uu"
 
-# (4) 信道套参数
-_CORRECT_CHANNEL_SUITE_VALUES = [
-    ["信道段", "10", "20"],  # TDM, ALOHA
-    ["速率", "100", "200"],
-    ["中心频点", "1500", "3500"],
-    ["带宽", "50", "100"],
-]
-_CHANNEL_SUITE_HEADERS = ["名称", "TDM", "ALOHA"]
-_CHANNEL_SUITE_FILLABLE_COLS_INDICES = [1, 2]  # Assuming "名称" 是预填的
+# (4) 信道套参数 - NOTE: 正确答案定义已不再是硬编码，而是通过逻辑动态计算
+# _CORRECT_CHANNEL_SUITE_VALUES 已经不再使用，将被移除
+# 修改此处的表头以匹配新的3x5表格样式
+_CHANNEL_SUITE_HEADERS = ["名称", "速率kbps", "带宽khz", "上行中心频点khz", "下行中心频点khz"]
+# _CHANNEL_SUITE_FILLABLE_COLS_INDICES 已经不再使用，将被移除
 
 # 1.组网参数分析 - 正确答案定义已不再用于此部分，因为检查逻辑改变为检查重复
 # 保留 headers 以便报告使用
@@ -54,62 +48,53 @@ _P2P_DOWNLINK_START_COL_INDEX = 3
 _P2P_UPLINK_END_COL_INDEX = 6
 
 # 3.虚拟子网参数
-_CORRECT_VIRTUAL_SUBNET_VALUES = [
-    ["虚拟子网信道段", "1000", "10000", "11000", "12000", "13000"],  # Bandwidth, Frequencies
-]
+# 移除 _CORRECT_VIRTUAL_SUBNET_VALUES
 _VIRTUAL_SUBNET_HEADERS = ["名称", "带宽（khz）", "下行起始频率（khz）", "下行终止频率（khz）", "上行起始频率（khz）",
                            "上行终止频率（khz）"]
-_VIRTUAL_SUBNET_FILLABLE_COLS_INDICES = [1, 2, 3, 4, 5]  # Excluding "名称" column
+# 移除 _VIRTUAL_SUBNET_FILLABLE_COLS_INDICES
 
 # --- Check Type Constants ---
-_CHECK_TYPE_TEXTBOX_GROUP = "textbox_group"
-_CHECK_TYPE_DATAFRAME = "dataframe"
+_CHECK_TYPE_TEXTBOX_GROUP = "textbox_group" # Not used in current logic
+_CHECK_TYPE_DATAFRAME = "dataframe" # Not used in current logic
 _CHECK_TYPE_CHANNEL_FREQUENCY_LOGIC = "channel_frequency_logic"
-_CHECK_TYPE_TEXTBOX_AND_DATAFRAME = "textbox_and_dataframe"  # This type is reused for P2P but with modified logic
-_CHECK_TYPE_DATAFRAME_COLUMN_DUPLICATE = "dataframe_column_duplicate_check"  # 新增的检查类型
+_CHECK_TYPE_TEXTBOX_AND_DATAFRAME = "textbox_and_dataframe"
+_CHECK_TYPE_DATAFRAME_COLUMN_DUPLICATE = "dataframe_column_duplicate_check"
+_CHECK_TYPE_CHANNEL_SUITE_LOGIC = "channel_suite_logic"
+_CHECK_TYPE_VIRTUAL_SUBNET_LOGIC = "virtual_subnet_logic"  # 新增：虚拟子网的自定义逻辑检查类型
 
-# --- 用于比较的逻辑段落配置 (移除了 (1) 和 (2) 部分) ---
+# --- 用于比较的逻辑段落配置 ---
 _COMPARISON_CONFIG = {
-    # 移除了 "(1) xx参数"
-    # 移除了 "(2) Xxx站配置参数"
     "（3）信道段参数": {
-        "check_type": _CHECK_TYPE_CHANNEL_FREQUENCY_LOGIC,  # New custom check type
+        "check_type": _CHECK_TYPE_CHANNEL_FREQUENCY_LOGIC,
         "report_headers": _CHANNEL_SEGMENT_HEADERS,
         "dropdown_label": _CHANNEL_TYPE_LABEL,
-        "correct_dropdown_value": _CORRECT_CHANNEL_TYPE,  # Still useful for base check
-        "params": ["channel_segment_value", "channel_type_value"]  # dataframe first, then dropdown
+        "correct_dropdown_value": _CORRECT_CHANNEL_TYPE,  # 即使不校验，这个值也会在后续逻辑中作为默认或参考
+        "params": ["channel_segment_value", "channel_type_value"]
     },
     "（4）信道套参数": {
-        "check_type": _CHECK_TYPE_DATAFRAME,
-        "report_headers": _CHANNEL_SUITE_HEADERS,
-        "correct_values": _CORRECT_CHANNEL_SUITE_VALUES,
-        "fillable_cols_indices": _CHANNEL_SUITE_FILLABLE_COLS_INDICES,
-        "param": "channel_suite_value"
+        "check_type": _CHECK_TYPE_CHANNEL_SUITE_LOGIC,
+        "report_headers": _CHANNEL_SUITE_HEADERS, # 引用更新后的表头
+        "params": ["channel_suite_value", "channel_segment_value"]
     },
     "1.组网参数分析": {
-        "check_type": _CHECK_TYPE_DATAFRAME_COLUMN_DUPLICATE,  # 使用新的检查类型
-        "report_headers": _NETWORK_ANALYSIS_HEADERS,  # 仍然需要 headers 用于报告
+        "check_type": _CHECK_TYPE_DATAFRAME_COLUMN_DUPLICATE,
+        "report_headers": _NETWORK_ANALYSIS_HEADERS,
         "param": "network_analysis_value",
-        "column_to_check_index": 3,  # "CC地址" 列的索引 (0-based)
-        "column_to_check_name": "CC地址"  # 方便在详细错误中显示列名
-        # 不再需要 correct_values 和 fillable_cols_indices
+        "column_to_check_index": 3,
+        "column_to_check_name": "CC地址"
     },
     "2.点对点通信参数": {
-        "check_type": _CHECK_TYPE_TEXTBOX_AND_DATAFRAME,  # Revert to this type, but modify its logic
-        "fields": [_LOCAL_CC_ADDRESS_LABEL, _REMOTE_XX_ADDRESS_LABEL],  # Keep for parsing, but not for exact check
-        "correct_textbox_answers": [_CORRECT_LOCAL_CC_ADDRESS, _CORRECT_REMOTE_XX_ADDRESS],
-        # Keep as placeholders, not for exact check
+        "check_type": _CHECK_TYPE_TEXTBOX_AND_DATAFRAME,
+        "fields": [_LOCAL_CC_ADDRESS_LABEL, _REMOTE_XX_ADDRESS_LABEL],
+        "correct_textbox_answers": [_CORRECT_LOCAL_CC_ADDRESS, _CORRECT_REMOTE_XX_ADDRESS], # These are placeholders for labels, not used for exact matching in current check_paper logic.
         "report_headers": _P2P_HEADERS,
-        # No correct_dataframe_values needed for exact match
-        "fillable_cols_indices": _P2P_FILLABLE_COLS_INDICES,  # RE-ENABLED: Used for general structure checks.
+        "fillable_cols_indices": _P2P_FILLABLE_COLS_INDICES,
         "params": ["local_cc_address_value", "remote_xx_address_value", "p2p_value"]
     },
     "3.虚拟子网参数": {
-        "check_type": _CHECK_TYPE_DATAFRAME,
+        "check_type": _CHECK_TYPE_VIRTUAL_SUBNET_LOGIC,
         "report_headers": _VIRTUAL_SUBNET_HEADERS,
-        "correct_values": _CORRECT_VIRTUAL_SUBNET_VALUES,
-        "fillable_cols_indices": _VIRTUAL_SUBNET_FILLABLE_COLS_INDICES,
-        "param": "virtual_subnet_value"
+        "params": ["virtual_subnet_value", "virtual_subnet_rate_value"]
     }
 }
 
@@ -125,32 +110,20 @@ _KBP_MAPPING = {
 }
 
 
-# KBP映射现在是硬编码，不需要加载文件，所以这些状态变量不再需要
-# _KBP_FILE_LOADED = True # 总是视为已加载
-# _KBP_LOAD_ERROR = None # 总是视为无加载错误
-
-# 移除 _load_kbp_mapping 函数，因为它不再需要
-
 # --- 函数 1: 捕获用户输入并格式化为字符串 (用于下载，功能不变) ---
 def capture_paper_data_string(
         subnet_id_value, network_name_value,
-        station_config_headers, station_config_value,  # station_config_value 是 DataFrame
-        channel_segment_headers, channel_segment_value,  # channel_segment_value 是 DataFrame
-        channel_suite_headers, channel_suite_value,  # channel_suite_value 是 DataFrame
-        network_analysis_headers, network_analysis_value,  # network_analysis_value 是 DataFrame
+        station_config_headers, station_config_value,
+        channel_segment_headers, channel_segment_value,
+        channel_suite_headers, channel_suite_value,
+        network_analysis_headers, network_analysis_value,
         local_cc_address_value, remote_xx_address_value,
-        p2p_headers, p2p_value,  # p2p_value 是 DataFrame
-        virtual_subnet_headers, virtual_subnet_value,  # virtual_subnet_value 是 DataFrame
-        channel_type_value  # 新增参数
+        p2p_headers, p2p_value,
+        virtual_subnet_headers, virtual_subnet_value,
+        channel_type_value
 ):
     """
     捕获所有用户输入数据，并将其格式化为可读的字符串，用于下载保存。
-
-    Args:
-        各项直接从 Gradio 界面接收的用户输入值。
-
-    Returns:
-        str: 格式化后的用户输入数据字符串。
     """
     old_stdout = sys.stdout
     redirected_output = io.StringIO()
@@ -165,7 +138,6 @@ def capture_paper_data_string(
 
         print(f"\n(2) Xxx站配置参数:")
         print("Headers:", station_config_headers)
-        # 转换 DataFrame 为 list of lists
         station_config_list = station_config_value.values.tolist() if isinstance(station_config_value,
                                                                                  pd.DataFrame) else station_config_value
         print("Data:", station_config_list)
@@ -175,10 +147,10 @@ def capture_paper_data_string(
         channel_segment_list = channel_segment_value.values.tolist() if isinstance(channel_segment_value,
                                                                                    pd.DataFrame) else channel_segment_value
         print("Data:", channel_segment_list)
-        print(f"{_CHANNEL_TYPE_LABEL} {channel_type_value}")  # 在此处打印新增的信道类型值
+        print(f"{_CHANNEL_TYPE_LABEL} {channel_type_value}")
 
         print(f"\n(4) 信道套参数:")
-        print("Headers:", channel_suite_headers)
+        print("Headers:", channel_suite_headers) # 这里会使用更新后的表头
         channel_suite_list = channel_suite_value.values.tolist() if isinstance(channel_suite_value,
                                                                                pd.DataFrame) else channel_suite_value
         print("Data:", channel_suite_list)
@@ -193,7 +165,6 @@ def capture_paper_data_string(
         print(f"{_LOCAL_CC_ADDRESS_LABEL} {local_cc_address_value}")
         print(f"{_REMOTE_XX_ADDRESS_LABEL} {remote_xx_address_value}")
         print("\n点对点通信参数表:")
-        print("Headers:", p2p_headers)
         p2p_list = p2p_value.values.tolist() if isinstance(p2p_value, pd.DataFrame) else p2p_value
         print("Data:", p2p_list)
 
@@ -214,23 +185,9 @@ def capture_paper_data_string(
 def _check_uplink_downlink_frequency_rule(section_title, user_row_index,
                                           downlink_start_freq_val, uplink_end_freq_val,
                                           downlink_start_col_header, uplink_end_col_header):
-    """
-    检查上行终止频率是否大于下行起始频率。
-    如果发现错误，返回错误个数和详细错误列表。
-    Args:
-        section_title (str): 错误所属的友好标题。
-        user_row_index (int): 1-based 行索引。
-        downlink_start_freq_val (str/float): 用户填写的下行起始频率值。
-        uplink_end_freq_val (str/float): 用户填写的上行终止频率值。
-        downlink_start_col_header (str): 下行起始频率的列头。
-        uplink_end_col_header (str): 上行终止频率的列头。
-    Returns:
-        tuple: (error_count, detailed_error_list)
-    """
     errors = []
     error_count = 0
     try:
-        # 尝试将频率值转换为浮点数进行比较
         dl_start = float(str(downlink_start_freq_val).strip())
         ul_end = float(str(uplink_end_freq_val).strip())
 
@@ -240,14 +197,13 @@ def _check_uplink_downlink_frequency_rule(section_title, user_row_index,
                 'section_title': section_title,
                 'type': 'frequency_logic_error',
                 'row': user_row_index,
-                'col_header_ul_end': uplink_end_col_header,  # For display in markdown
-                'col_header_dl_start': downlink_start_col_header,  # For display in markdown
+                'col_header_ul_end': uplink_end_col_header,
+                'col_header_dl_start': downlink_start_col_header,
                 'user_value_ul_end': f"{ul_end:.2f}",
                 'user_value_dl_start': f"{dl_start:.2f}",
                 'message': f"上行终止频率 ({ul_end:.2f}khz) 不应大于下行起始频率 ({dl_start:.2f}khz)。"
             })
     except (ValueError, TypeError):
-        # If frequency values are not valid numbers, report as data_type_error
         error_count += 1
         errors.append({
             'section_title': section_title,
@@ -258,34 +214,17 @@ def _check_uplink_downlink_frequency_rule(section_title, user_row_index,
     return error_count, errors
 
 
-# 新增辅助函数：检查带宽是否大于等于对应速率的带宽
+# 检查带宽是否大于等于对应速率的带宽
 def _check_bandwidth_vs_rate_rule(section_title, user_row_index, user_rate_val, user_bandwidth_val,
-                                  rate_col_header, bandwidth_col_header):
-    """
-    检查带宽是否大于等于硬编码KBP映射中对应速率的带宽值。
-    如果发现错误，返回错误个数和详细错误列表。
-    Args:
-        section_title (str): 错误所属的友好标题。
-        user_row_index (int): 1-based 行索引。
-        user_rate_val (str/int): 用户填写的速率值。
-        user_bandwidth_val (str/int): 用户填写的带宽值。
-        rate_col_header (str): 速率列的列头。
-        bandwidth_col_header (str): 带宽列的列头。
-    Returns:
-        tuple: (error_count, detailed_error_list)
-    """
+                                  rate_col_header, bandwidth_col_header, kbp_mapping):
     errors = []
     error_count = 0
-
-    # 由于KBP映射是硬编码的，不需要文件加载错误处理。
-    # 如果映射为空，这意味着代码本身有问题，或者我们希望没有映射时也算错误。
-    # 目前假设映射不会为空，且始终有效。
 
     try:
         user_rate = int(str(user_rate_val).strip())
         user_bandwidth = int(str(user_bandwidth_val).strip())
 
-        if user_rate not in _KBP_MAPPING:
+        if user_rate not in kbp_mapping:
             error_count += 1
             errors.append({
                 'section_title': section_title,
@@ -298,7 +237,7 @@ def _check_bandwidth_vs_rate_rule(section_title, user_row_index, user_rate_val, 
                 'message': f"速率 '{user_rate}' 在KBP映射中未找到对应带宽。请核对速率值。"
             })
         else:
-            required_bandwidth = _KBP_MAPPING[user_rate]
+            required_bandwidth = kbp_mapping[user_rate]
             if user_bandwidth < required_bandwidth:
                 error_count += 1
                 errors.append({
@@ -313,7 +252,6 @@ def _check_bandwidth_vs_rate_rule(section_title, user_row_index, user_rate_val, 
                     'message': f"带宽 ({user_bandwidth}khz) 小于速率 {user_rate}kbps 对应的最低要求带宽 ({required_bandwidth}khz)。"
                 })
     except (ValueError, TypeError):
-        # If rate or bandwidth values are not valid integers, report as data_type_error
         error_count += 1
         errors.append({
             'section_title': section_title,
@@ -332,38 +270,86 @@ def _check_bandwidth_vs_rate_rule(section_title, user_row_index, user_rate_val, 
     return error_count, errors
 
 
+# 新增辅助函数：检查两个频率范围是否重叠
+def _check_frequency_overlap_rule(section_title, user_row_index,
+                                  dl_start, dl_end, ul_start, ul_end,
+                                  dl_start_col_header, dl_end_col_header, ul_start_col_header, ul_end_col_header):
+    errors = []
+    error_count = 0
+    try:
+        dl_start_f = float(str(dl_start).strip())
+        dl_end_f = float(str(dl_end).strip())
+        ul_start_f = float(str(ul_start).strip())
+        ul_end_f = float(str(ul_end).strip())
+
+        # 确保频率范围是有效的 (起始 <= 终止)
+        if dl_start_f > dl_end_f:
+            error_count += 1
+            errors.append({
+                'section_title': section_title,
+                'type': 'frequency_logic_error',
+                'row': user_row_index,
+                'message': f"下行起始频率({dl_start_f})不能大于下行终止频率({dl_end_f})。"
+            })
+        if ul_start_f > ul_end_f:
+            error_count += 1
+            errors.append({
+                'section_title': section_title,
+                'type': 'frequency_logic_error',
+                'row': user_row_index,
+                'message': f"上行起始频率({ul_start_f})不能大于上行终止频率({ul_end_f})。"
+            })
+
+        # 判断两个区间 [a, b] 和 [c, d] 是否重叠：当且仅当 max(a, c) < min(b, d) 时重叠
+        # 这里要检查的是不能重叠，所以如果重叠，就报错。
+        if max(dl_start_f, ul_start_f) < min(dl_end_f,
+                                             ul_end_f):
+            error_count += 1
+            errors.append({
+                'section_title': section_title,
+                'type': 'frequency_logic_error',
+                'row': user_row_index,
+                'message': f"频率范围重叠：下行频率范围[{dl_start_f:.2f}-{dl_end_f:.2f}]与上行频率范围[{ul_start_f:.2f}-{ul_end_f:.2f}]重叠，不允许。",
+                'user_value_dl_start': f"{dl_start_f:.2f}",
+                'user_value_dl_end': f"{dl_end_f:.2f}",
+                'user_value_ul_start': f"{ul_start_f:.2f}",
+                'user_value_ul_end': f"{ul_end_f:.2f}",
+                'col_header_dl_start': dl_start_col_header,
+                'col_header_dl_end': dl_end_col_header,
+                'col_header_ul_start': ul_start_col_header,
+                'col_header_ul_end': ul_end_col_header,
+            })
+
+    except (ValueError, TypeError):
+        error_count += 1
+        errors.append({
+            'section_title': section_title,
+            'type': 'data_type_error',
+            'row': user_row_index,
+            'message': f"频率值应为数字，无法进行频率重叠校验。"
+        })
+    return error_count, errors
+
+
 # --- 函数 2: 对比用户输出与正确答案并计算错误个数及详细错误 ---
 def check_paper(
-        subnet_id_value, network_name_value,  # 这些参数仍然接收，但不再被用于评分
-        station_config_value,  # 这些参数仍然接收，但不再被用于评分
+        subnet_id_value, network_name_value,
+        station_config_value,
         channel_segment_value, channel_type_value,
         channel_suite_value,
         network_analysis_value,
         local_cc_address_value, remote_xx_address_value, p2p_value,
-        virtual_subnet_value
+        virtual_subnet_value,
+        virtual_subnet_rate_value
 ):
     """
     将用户答卷结果直接与内置的正确答案/逻辑进行对比，计算并返回错误个数、错误部分的标题列表，
     以及详细的错误信息列表。
-
-    Args:
-        各项直接从 Gradio 界面接收的用户输入值。
-
-    Returns:
-        tuple: (error_message_string, list_of_error_titles_with_counts, list_of_error_titles_only, detailed_errors_list)
-               error_message_string (str): 包含错误部分标题和个数的格式化字符串，或表示全部正确的字符串。
-               list_of_error_titles_with_counts (list[tuple]): 错误部分的友好标题和错误个数的列表 (例如: [("（1）xx参数", 2), ...])。
-               list_of_error_titles_only (list[str]): 错误部分的友好标题列表 (用于传递给分析器)。
-               detailed_errors_list (list[dict]): 详细的错误信息列表，用于页面显示具体错误。
     """
-    error_sections_with_counts = []  # List of (title, count) tuples for summary
-    error_titles_only = []  # List of titles only for analyzer
-    detailed_errors = []  # Stores detailed error information
+    error_sections_with_counts = []
+    error_titles_only = []
+    detailed_errors = []
 
-    # KBP映射现在是硬编码的，不需要文件加载，所以 _load_kbp_mapping() 调用被移除
-    # _load_kbp_mapping()
-
-    # Use a dictionary to map param names to actual values passed into this function
     input_values = {
         "subnet_id_value": subnet_id_value,
         "network_name_value": network_name_value,
@@ -375,149 +361,24 @@ def check_paper(
         "local_cc_address_value": local_cc_address_value,
         "remote_xx_address_value": remote_xx_address_value,
         "p2p_value": p2p_value,
-        "virtual_subnet_value": virtual_subnet_value
+        "virtual_subnet_value": virtual_subnet_value,
+        "virtual_subnet_rate_value": virtual_subnet_rate_value
     }
 
-    # Helper function to convert dataframe to list of lists for consistent comparison
     def _df_to_lol(df_value):
-        """Converts a pandas DataFrame to a list of lists, or returns as-is if not a DataFrame."""
         if isinstance(df_value, pd.DataFrame):
             return df_value.values.tolist()
-        return df_value  # Already a list of lists or None
+        return df_value
 
     for friendly_title, config in _COMPARISON_CONFIG.items():
-        current_section_error_count = 0  # Initialize for the current section's quantifiable errors
-        current_section_detailed_errors = []  # Errors specific to this section
-        section_format_error = False  # Flag for format errors that prevent detailed counting or cause full penalty
+        current_section_error_count = 0
+        current_section_detailed_errors = []
+        section_format_error = False
 
-        if config["check_type"] == _CHECK_TYPE_TEXTBOX_GROUP:
-            # This type is currently not used in _COMPARISON_CONFIG as (1) and (2) are ignored.
-            # Keeping the logic for completeness, if it were to be re-introduced.
-            user_values = [input_values[param] for param in config["params"]]
-            correct_answers = config["correct_answers"]
-            fields = config["fields"]
+        # NOTE: The _CHECK_TYPE_DATAFRAME block is removed as it's no longer used.
+        # All sections now use specific logic checks like _CHECK_TYPE_CHANNEL_FREQUENCY_LOGIC, etc.
 
-            for i in range(len(correct_answers)):
-                user_val = str(user_values[i]).strip()
-                correct_val = str(correct_answers[i]).strip()
-                if user_val != correct_val:
-                    current_section_error_count += 1
-                    current_section_detailed_errors.append({
-                        'section_title': friendly_title,
-                        'type': 'textbox',
-                        'field_label': fields[i],
-                        'user_value': user_val,
-                        'answer_value': correct_val
-                    })
-
-        elif config["check_type"] == _CHECK_TYPE_DATAFRAME:
-            user_df_value = _df_to_lol(input_values[config["param"]])
-            correct_values = config["correct_values"]
-            fillable_cols_indices = config["fillable_cols_indices"]
-            report_headers = config["report_headers"]
-
-            # Validate user input structure
-            if not isinstance(user_df_value, list) or not all(isinstance(row, list) for row in user_df_value):
-                # If not a list of lists, treat as major format error.
-                section_format_error = True
-                current_section_detailed_errors.append({
-                    'section_title': friendly_title,
-                    'type': 'dataframe_format_error',
-                    'message': "表格格式错误或无法解析。请确保输入为有效数据。"
-                })
-
-            if not section_format_error:  # Proceed with detailed checks only if basic format is okay
-                user_rows = len(user_df_value)
-                correct_rows = len(correct_values)
-
-                # Compare row counts
-                if user_rows != correct_rows:
-                    # Calculate errors for missing/extra rows.
-                    # For score calculation, each 'missing' fillable cell is an error.
-                    if user_rows < correct_rows:
-                        current_section_error_count += (correct_rows - user_rows) * len(fillable_cols_indices)
-                    elif user_rows > correct_rows:  # Penalize extra rows for simplicity, or just ignore them
-                        # For now, let's just count errors for expected missing data, not extra input.
-                        # Can be refined based on exact grading policy.
-                        pass
-                    current_section_detailed_errors.append({
-                        'section_title': friendly_title,
-                        'type': 'row_count_mismatch',
-                        'message': f"行数不匹配: 您的表格有 {user_rows} 行，应有 {correct_rows} 行。",
-                        'user_value': str(user_rows),
-                        'answer_value': str(correct_rows)
-                    })
-
-                rows_to_compare = min(user_rows, correct_rows)
-
-                # Identify frequency columns for Virtual Subnet table (if applicable)
-                # This is for "3.虚拟子网参数" specifically
-                virtual_subnet_downlink_start_idx = 2
-                virtual_subnet_uplink_end_idx = 5
-
-                for r in range(rows_to_compare):
-                    user_row = user_df_value[r]
-                    # Determine columns to check in the current row based on user's column count
-                    # Use fillable_cols_indices for general column count check
-                    max_expected_col_idx = max(fillable_cols_indices) if fillable_cols_indices else -1
-                    if len(user_row) <= max_expected_col_idx:
-                        # If user row has too few columns, count errors for missing fillable cells *in this row*
-                        missing_cols_in_row = len([idx for idx in fillable_cols_indices if idx > len(user_row) - 1])
-                        current_section_error_count += missing_cols_in_row
-                        current_section_detailed_errors.append({
-                            'section_title': friendly_title,
-                            'type': 'column_count_mismatch',
-                            'row': r + 1,
-                            'message': f"第 {r + 1} 行列数不足，缺少应填写的列。",
-                            'user_value': str(len(user_row)),
-                            'answer_value': f"至少需要 {max_expected_col_idx + 1} 列"
-                        })
-                        # Adjust cols_to_check_in_row to only consider existing columns
-                        cols_to_check_in_row = [idx for idx in fillable_cols_indices if idx < len(user_row)]
-                    else:
-                        cols_to_check_in_row = fillable_cols_indices
-
-                    for c_idx in cols_to_check_in_row:
-                        # Find the corresponding index in the correct_values row based on the fillable_cols_indices mapping
-                        # This assumes correct_values lists only the *fillable* columns in order
-                        correct_val_relative_idx = fillable_cols_indices.index(c_idx)
-
-                        user_val = str(user_row[c_idx]).strip()
-                        correct_val = str(correct_values[r][correct_val_relative_idx]).strip()
-
-                        if user_val != correct_val:
-                            current_section_error_count += 1
-                            col_header_display = report_headers[c_idx] if c_idx < len(
-                                report_headers) else f"列 {c_idx + 1}"
-                            current_section_detailed_errors.append({
-                                'section_title': friendly_title,
-                                'type': 'dataframe_cell',
-                                'row': r + 1,  # 1-based index
-                                'col': c_idx + 1,  # 1-based index
-                                'col_header': col_header_display,
-                                'user_value': user_val,
-                                'answer_value': correct_val
-                            })
-
-                    # Check for Uplink_End <= Downlink_Start for "3.虚拟子网参数" (if it has relevant columns)
-                    if friendly_title == "3.虚拟子网参数" and \
-                            len(user_row) > max(virtual_subnet_downlink_start_idx, virtual_subnet_uplink_end_idx) and \
-                            virtual_subnet_downlink_start_idx < len(user_row) and virtual_subnet_uplink_end_idx < len(
-                        user_row):  # ensure cols exist before accessing
-                        dl_start_val = user_row[virtual_subnet_downlink_start_idx]
-                        ul_end_val = user_row[virtual_subnet_uplink_end_idx]
-
-                        freq_rel_err_count, freq_rel_detailed_errors = _check_uplink_downlink_frequency_rule(
-                            friendly_title, r + 1,
-                            dl_start_val, ul_end_val,
-                            report_headers[virtual_subnet_downlink_start_idx],
-                            report_headers[virtual_subnet_uplink_end_idx]
-                        )
-                        current_section_error_count += freq_rel_err_count
-                        current_section_detailed_errors.extend(freq_rel_detailed_errors)
-
-        elif config["check_type"] == _CHECK_TYPE_DATAFRAME_COLUMN_DUPLICATE:
-            # Logic for 1.组网参数分析 (CC地址 uniqueness)
+        if config["check_type"] == _CHECK_TYPE_DATAFRAME_COLUMN_DUPLICATE:
             user_df_value = _df_to_lol(input_values[config["param"]])
             col_to_check_idx = config["column_to_check_index"]
             col_to_check_name = config["column_to_check_name"]
@@ -532,23 +393,20 @@ def check_paper(
                 })
 
             if not section_format_error:
-                value_first_row_map = {}  # Map value to its first occurring row index (0-based)
-                duplicate_rows_map = defaultdict(list)  # Map value to list of subsequent row indices (0-based)
+                value_first_row_map = {}
+                duplicate_rows_map = defaultdict(list)
 
                 for r, row in enumerate(user_df_value):
-                    # Ensure row has enough columns to access the target CC address column
                     if col_to_check_idx < len(row):
                         cell_value = str(row[col_to_check_idx]).strip()
-                        if cell_value and cell_value != "":  # Only check non-empty values for duplication
+                        if cell_value and cell_value != "":
+                            # Only add to duplicates if it's not the first occurrence of this value
                             if cell_value in value_first_row_map:
                                 duplicate_rows_map[cell_value].append(r)
                             else:
                                 value_first_row_map[cell_value] = r
                     else:
-                        # If a row is too short to contain the CC address, it's a format error for that cell.
-                        # This isn't strictly a "duplicate" error, but rather a missing data error.
-                        # We can log it as a column_count_mismatch for completeness.
-                        current_section_error_count += 1  # Count as one error for this row's missing data
+                        current_section_error_count += 1
                         current_section_detailed_errors.append({
                             'section_title': friendly_title,
                             'type': 'column_count_mismatch',
@@ -556,18 +414,18 @@ def check_paper(
                             'message': f"第 {r + 1} 行列数不足，缺少CC地址列，无法进行重复性校验。"
                         })
 
-                # Count errors for each duplicate occurrence (excluding the first instance)
                 for value, row_indices in duplicate_rows_map.items():
-                    current_section_error_count += len(row_indices)  # Each entry in row_indices is a duplicate
+                    # Each subsequent duplicate for a value adds to the error count
+                    current_section_error_count += len(row_indices) # This counts each *additional* occurrence as an error
                     col_header_display = report_headers[col_to_check_idx] if col_to_check_idx < len(
                         report_headers) else f"列 {col_to_check_idx + 1}"
 
                     for dup_r in row_indices:
                         current_section_detailed_errors.append({
                             'section_title': friendly_title,
-                            'type': 'dataframe_duplicate',  # New type for duplicate errors
-                            'row': dup_r + 1,  # 1-based index
-                            'col': col_to_check_idx + 1,  # 1-based index
+                            'type': 'dataframe_duplicate',
+                            'row': dup_r + 1,
+                            'col': col_to_check_idx + 1,
                             'col_header': col_header_display,
                             'user_value': value,
                             'message': f"值 '{value}' 在此行重复出现。CC地址列不允许重复。"
@@ -577,24 +435,25 @@ def check_paper(
             user_df_value = _df_to_lol(input_values[config["params"][0]])
             user_channel_type = str(input_values[config["params"][1]]).strip()
             report_headers = config["report_headers"]
-            tolerance = 1e-6  # Tolerance for floating point comparisons
+            tolerance = 1e-6
 
-            # Check Dropdown (Requirement 1 & 2 indirectly relates to channel_type)
-            correct_dropdown_val = str(config["correct_dropdown_value"]).strip()
-            if user_channel_type != correct_dropdown_val:
-                current_section_error_count += 1
-                current_section_detailed_errors.append({
-                    'section_title': friendly_title,
-                    'type': 'dropdown',
-                    'field_label': config["dropdown_label"],
-                    'user_value': user_channel_type,
-                    'answer_value': correct_dropdown_val
-                })
+            # # --- Removed: Logic for checking dropdown value directly. It's now used for calculations only. ---
+            # correct_dropdown_val = str(config["correct_dropdown_value"]).strip()
+            # if user_channel_type != correct_dropdown_val:
+            #     current_section_error_count += 1
+            #     current_section_detailed_errors.append({
+            #         'section_title': friendly_title,
+            #         'type': 'dropdown',
+            #         'field_label': config["dropdown_label"],
+            #         'user_value': user_channel_type,
+            #         'answer_value': correct_dropdown_val,
+            #         'message': f"信道类型应为 '{correct_dropdown_val}'。"
+            #     })
+            # # --- End Removed ---
 
             user_downlink_start = user_downlink_end = user_uplink_start = user_uplink_end = None
             frequencies_parsed = False
 
-            # Initial check for dataframe structure (expected to have at least one row for frequencies)
             if not isinstance(user_df_value, list) or len(user_df_value) == 0 or not all(
                     isinstance(row, list) for row in user_df_value):
                 section_format_error = True
@@ -605,12 +464,11 @@ def check_paper(
                 })
 
             if not section_format_error:
-                # Assuming only one row for simplicity for now, as per `channel_segment_data`
                 user_row = user_df_value[0]
-                expected_cols = 5  # [名称, 下行始, 下行终, 上行始, 上行终]
+                expected_cols = 5
 
                 if len(user_row) < expected_cols:
-                    current_section_error_count += 4  # If user row has too few columns, count errors for missing frequency fields (4 frequency fields)
+                    current_section_error_count += (expected_cols - 1) # Satellite name is fixed, so 4 fillable columns
                     current_section_detailed_errors.append({
                         'section_title': friendly_title,
                         'type': 'column_count_mismatch',
@@ -620,7 +478,6 @@ def check_paper(
                         'answer_value': f"至少需要 {expected_cols} 列"
                     })
                 else:
-                    # Attempt to parse frequencies as floats, handling potential ValueError
                     try:
                         user_downlink_start = float(str(user_row[1]).strip())
                         user_downlink_end = float(str(user_row[2]).strip())
@@ -628,15 +485,14 @@ def check_paper(
                         user_uplink_end = float(str(user_row[4]).strip())
                         frequencies_parsed = True
                     except (ValueError, TypeError):
-                        current_section_error_count += 4  # If any parsing fails, count all 4 frequencies as errors
+                        current_section_error_count += 4 # All four frequency values
                         current_section_detailed_errors.append({
                             'section_title': friendly_title,
                             'type': 'data_type_error',
                             'message': "频率值应为数字，请检查输入。"
                         })
 
-            if frequencies_parsed:  # Proceed with logic checks only if frequencies were parsed correctly
-                # Define correct ranges and offset based on channel type
+            if frequencies_parsed:
                 if user_channel_type == "uu":
                     downlink_min, downlink_max = 12.25, 12.75
                     uplink_min, uplink_max = 14.0, 14.5
@@ -646,24 +502,25 @@ def check_paper(
                     uplink_min, uplink_max = 29.4, 31.0
                     offset = 9.8
                 else:
-                    # If channel type is still invalid despite dropdown check, cannot perform logical checks
-                    current_section_error_count += 4  # Count 4 freq errors if type is not recognized for logic
+                    # 如果信道类型不是uu或aa，则无法进行后续依赖此类型的频率逻辑检查
+                    current_section_error_count += 4  # Count as 4 frequency related errors
                     current_section_detailed_errors.append({
                         'section_title': friendly_title,
                         'type': 'logic_check_failed',
                         'message': f"无法对信道类型 '{user_channel_type}' 执行频率逻辑检查。请选择 'uu' 或 'aa'。"
                     })
-                    frequencies_parsed = False  # Prevent further logical checks
+                    frequencies_parsed = False  # Prevent subsequent frequency logic checks that rely on type
 
-                if frequencies_parsed:  # Re-check if we can proceed after type validation
-                    # Requirement 1: Downlink Frequency Range
+                if frequencies_parsed:
+                    # Range checks
                     if not (downlink_min <= user_downlink_start <= downlink_max):
                         current_section_error_count += 1
                         current_section_detailed_errors.append({
                             'section_title': friendly_title, 'type': 'dataframe_cell', 'row': 1, 'col': 2,
                             'col_header': report_headers[1],
                             'user_value': f"{user_downlink_start}",
-                            'answer_value': f"{user_channel_type} 模式下，下行起始频率应在 {downlink_min}-{downlink_max} 范围内"
+                            'answer_value': f"{user_channel_type} 模式下，下行起始频率应在 {downlink_min}-{downlink_max} 范围内",
+                            'message': f"{user_channel_type} 模式下，下行起始频率应在 {downlink_min:.2f}-{downlink_max:.2f} 范围内"
                         })
                     if not (downlink_min <= user_downlink_end <= downlink_max):
                         current_section_error_count += 1
@@ -671,17 +528,18 @@ def check_paper(
                             'section_title': friendly_title, 'type': 'dataframe_cell', 'row': 1, 'col': 3,
                             'col_header': report_headers[2],
                             'user_value': f"{user_downlink_end}",
-                            'answer_value': f"{user_channel_type} 模式下，下行终止频率应在 {downlink_min}-{downlink_max} 范围内"
+                            'answer_value': f"{user_channel_type} 模式下，下行终止频率应在 {downlink_min}-{downlink_max} 范围内",
+                            'message': f"{user_channel_type} 模式下，下行终止频率应在 {downlink_min:.2f}-{downlink_max:.2f} 范围内"
                         })
 
-                    # Requirement 2: Uplink Frequency Range
                     if not (uplink_min <= user_uplink_start <= uplink_max):
                         current_section_error_count += 1
                         current_section_detailed_errors.append({
                             'section_title': friendly_title, 'type': 'dataframe_cell', 'row': 1, 'col': 4,
                             'col_header': report_headers[3],
                             'user_value': f"{user_uplink_start}",
-                            'answer_value': f"{user_channel_type} 模式下，上行起始频率应在 {uplink_min}-{uplink_max} 范围内"
+                            'answer_value': f"{user_channel_type} 模式下，上行起始频率应在 {uplink_min}-{uplink_max} 范围内",
+                            'message': f"{user_channel_type} 模式下，上行起始频率应在 {uplink_min:.2f}-{uplink_max:.2f} 范围内"
                         })
                     if not (uplink_min <= user_uplink_end <= uplink_max):
                         current_section_error_count += 1
@@ -689,17 +547,19 @@ def check_paper(
                             'section_title': friendly_title, 'type': 'dataframe_cell', 'row': 1, 'col': 5,
                             'col_header': report_headers[4],
                             'user_value': f"{user_uplink_end}",
-                            'answer_value': f"{user_channel_type} 模式下，上行终止频率应在 {uplink_min}-{uplink_max} 范围内"
+                            'answer_value': f"{user_channel_type} 模式下，上行终止频率应在 {uplink_min}-{uplink_max} 范围内",
+                            'message': f"{user_channel_type} 模式下，上行终止频率应在 {uplink_min:.2f}-{uplink_max:.2f} 范围内"
                         })
 
-                    # Requirement 3: Uplink-Downlink Relationship
+                    # Offset checks
                     if not (abs(user_uplink_start - (user_downlink_start + offset)) < tolerance):
                         current_section_error_count += 1
                         current_section_detailed_errors.append({
                             'section_title': friendly_title, 'type': 'logic_check_failed', 'row': 1, 'col': 4,
                             'col_header': report_headers[3],
                             'user_value': f"{user_uplink_start}",
-                            'answer_value': f"{user_channel_type} 模式下，上行起始频率应为 下行起始频率+{offset:.2f}"
+                            'answer_value': f"{user_channel_type} 模式下应为 下行起始频率+{offset:.2f}",
+                            'message': f"上行起始频率({user_uplink_start})与下行起始频率({user_downlink_start})不满足 {user_channel_type} 模式下 {offset:.2f}MHz 的偏移关系。"
                         })
                     if not (abs(user_uplink_end - (user_downlink_end + offset)) < tolerance):
                         current_section_error_count += 1
@@ -707,32 +567,350 @@ def check_paper(
                             'section_title': friendly_title, 'type': 'logic_check_failed', 'row': 1, 'col': 5,
                             'col_header': report_headers[4],
                             'user_value': f"{user_uplink_end}",
-                            'answer_value': f"{user_channel_type} 模式下，上行终止频率应为 下行终止频率+{offset:.2f}"
+                            'answer_value': f"{user_channel_type} 模式下应为 下行终止频率+{offset:.2f}",
+                            'message': f"上行终止频率({user_uplink_end})与下行终止频率({user_downlink_end})不满足 {user_channel_type} 模式下 {offset:.2f}MHz 的偏移关系。"
                         })
 
-                    # NEW Requirement: Uplink_End <= Downlink_Start
+                    # Specific rule: uplink end should not be greater than downlink start
                     freq_rel_err_count, freq_rel_detailed_errors = _check_uplink_downlink_frequency_rule(
-                        friendly_title, 1,  # Always row 1 for this table
+                        friendly_title, 1,
                         user_downlink_start, user_uplink_end,
-                        report_headers[1], report_headers[4]  # Headers for Downlink Start and Uplink End
+                        report_headers[1], report_headers[4]
                     )
                     current_section_error_count += freq_rel_err_count
                     current_section_detailed_errors.extend(freq_rel_detailed_errors)
 
+        elif config["check_type"] == _CHECK_TYPE_CHANNEL_SUITE_LOGIC:
+            user_channel_suite_df = _df_to_lol(input_values[config["params"][0]])
+            user_channel_segment_df = _df_to_lol(input_values[config["params"][1]])
+            report_headers = config["report_headers"]
+            expected_rows = 2 # TDM和ALOHA两行数据
+            expected_cols = 5 # 名称, 速率, 带宽, 上行中心频点, 下行中心频点
+            tolerance = 1e-6
 
-        elif config["check_type"] == _CHECK_TYPE_TEXTBOX_AND_DATAFRAME:
-            # For "2.点对点通信参数", we no longer check exact textbox values or dataframe cells for precise match.
-            # Only apply frequency rule and bandwidth-rate rule.
+            # 新的索引常量
+            TDM_ROW_IDX = 0
+            ALOHA_ROW_IDX = 1
+            RATE_COL_IDX = 1
+            BANDWIDTH_COL_IDX = 2
+            UPLINK_CENTER_FREQ_COL_IDX = 3
+            DOWNLINK_CENTER_FREQ_COL_IDX = 4
 
-            user_df_value = _df_to_lol(input_values[config["params"][-1]])
+            if not isinstance(user_channel_suite_df, list) or len(user_channel_suite_df) != expected_rows or \
+                    not all(isinstance(row, list) and len(row) == expected_cols for row in user_channel_suite_df):
+                section_format_error = True
+                # If format is wrong, count 8 errors for all cells that would otherwise be checked.
+                current_section_error_count += 8
+                current_section_detailed_errors.append({
+                    'section_title': friendly_title,
+                    'type': 'dataframe_format_error',
+                    'message': f"信道套参数表格格式错误或行/列数不匹配。应为 {expected_rows} 行 {expected_cols} 列。"
+                })
+
+            if not section_format_error:
+                segment_downlink_start_freq = None
+                segment_uplink_start_freq = None
+                segment_frequencies_valid = True
+
+                # 尝试从信道段参数获取频率数据
+                if not isinstance(user_channel_segment_df, list) or len(user_channel_segment_df) < 1 or \
+                        not isinstance(user_channel_segment_df[0], list) or len(user_channel_segment_df[0]) < 4:
+                    segment_frequencies_valid = False
+                    current_section_error_count += 4 # 4个频点检查无法进行
+                    current_section_detailed_errors.append({
+                        'section_title': friendly_title,
+                        'type': 'logic_check_failed',
+                        'message': "无法获取信道段参数中的频率数据，请检查信道段参数表格格式及内容是否完整。"
+                    })
+                else:
+                    try:
+                        # Indexing based on _CHANNEL_SEGMENT_HEADERS: ["卫星名称", "下行起始频率（khz）", "下行终止频率（khz）", "上行起始频率（khz）", "上行终止频率（khz）"]
+                        segment_downlink_start_freq = float(str(user_channel_segment_df[0][1]).strip())
+                        segment_uplink_start_freq = float(str(user_channel_segment_df[0][3]).strip())
+                    except (ValueError, TypeError):
+                        segment_frequencies_valid = False
+                        current_section_error_count += 4 # 4个频点检查无法进行
+                        current_section_detailed_errors.append({
+                            'section_title': friendly_title,
+                            'type': 'data_type_error',
+                            'message': "信道段参数中的频率值应为数字，无法进行信道套参数的频点逻辑校验。"
+                        })
+
+                expected_rate = 9.6
+                expected_bandwidth = 100
+
+                # --- TDM 行 (索引 TDM_ROW_IDX) ---
+                # TDM 速率检查
+                user_rate_tdm_val = str(user_channel_suite_df[TDM_ROW_IDX][RATE_COL_IDX]).strip()
+                try:
+                    if abs(float(user_rate_tdm_val) - expected_rate) > tolerance:
+                        current_section_error_count += 1
+                        current_section_detailed_errors.append({
+                            'section_title': friendly_title,
+                            'type': 'dataframe_cell',
+                            'row': TDM_ROW_IDX + 1, 'col': RATE_COL_IDX + 1,
+                            'col_header': report_headers[RATE_COL_IDX],
+                            'user_value': user_rate_tdm_val,
+                            'answer_value': str(expected_rate),
+                            'message': f"TDM速率应为 {expected_rate}"
+                        })
+                except (ValueError, TypeError):
+                    current_section_error_count += 1
+                    current_section_detailed_errors.append({
+                        'section_title': friendly_title, 'type': 'data_type_error',
+                        'row': TDM_ROW_IDX + 1, 'col': RATE_COL_IDX + 1,
+                        'col_header': report_headers[RATE_COL_IDX],
+                        'message': f"TDM速率 '{user_rate_tdm_val}' 应为数字。"
+                    })
+
+                # TDM 带宽检查
+                user_bandwidth_tdm_val = str(user_channel_suite_df[TDM_ROW_IDX][BANDWIDTH_COL_IDX]).strip()
+                try:
+                    if abs(float(user_bandwidth_tdm_val) - expected_bandwidth) > tolerance:
+                        current_section_error_count += 1
+                        current_section_detailed_errors.append({
+                            'section_title': friendly_title,
+                            'type': 'dataframe_cell',
+                            'row': TDM_ROW_IDX + 1, 'col': BANDWIDTH_COL_IDX + 1,
+                            'col_header': report_headers[BANDWIDTH_COL_IDX],
+                            'user_value': user_bandwidth_tdm_val,
+                            'answer_value': str(expected_bandwidth),
+                            'message': f"TDM带宽应为 {expected_bandwidth}"
+                        })
+                except (ValueError, TypeError):
+                    current_section_error_count += 1
+                    current_section_detailed_errors.append({
+                        'section_title': friendly_title, 'type': 'data_type_error',
+                        'row': TDM_ROW_IDX + 1, 'col': BANDWIDTH_COL_IDX + 1,
+                        'col_header': report_headers[BANDWIDTH_COL_IDX],
+                        'message': f"TDM带宽 '{user_bandwidth_tdm_val}' 应为数字。"
+                    })
+
+                if segment_frequencies_valid:
+                    # TDM 上行中心频点检查
+                    expected_tdm_uplink_center_freq = segment_uplink_start_freq + 50
+                    user_tdm_uplink_center_freq_val = str(user_channel_suite_df[TDM_ROW_IDX][UPLINK_CENTER_FREQ_COL_IDX]).strip()
+                    try:
+                        if abs(float(user_tdm_uplink_center_freq_val) - expected_tdm_uplink_center_freq) > tolerance:
+                            current_section_error_count += 1
+                            current_section_detailed_errors.append({
+                                'section_title': friendly_title,
+                                'type': 'dataframe_cell',
+                                'row': TDM_ROW_IDX + 1, 'col': UPLINK_CENTER_FREQ_COL_IDX + 1,
+                                'col_header': report_headers[UPLINK_CENTER_FREQ_COL_IDX],
+                                'user_value': user_tdm_uplink_center_freq_val,
+                                'answer_value': f"{expected_tdm_uplink_center_freq:.2f}",
+                                'message': f"TDM上行中心频点应为 信道段上行起始频率({segment_uplink_start_freq:.2f}) + 50 = {expected_tdm_uplink_center_freq:.2f}"
+                            })
+                    except (ValueError, TypeError):
+                        current_section_error_count += 1
+                        current_section_detailed_errors.append({
+                            'section_title': friendly_title, 'type': 'data_type_error',
+                            'row': TDM_ROW_IDX + 1, 'col': UPLINK_CENTER_FREQ_COL_IDX + 1,
+                            'col_header': report_headers[UPLINK_CENTER_FREQ_COL_IDX],
+                            'message': f"TDM上行中心频点 '{user_tdm_uplink_center_freq_val}' 应为数字。"
+                        })
+
+                    # TDM 下行中心频点检查 (新增规则：基于下行起始频率+50)
+                    expected_tdm_downlink_center_freq = segment_downlink_start_freq + 50
+                    user_tdm_downlink_center_freq_val = str(user_channel_suite_df[TDM_ROW_IDX][DOWNLINK_CENTER_FREQ_COL_IDX]).strip()
+                    try:
+                        if abs(float(user_tdm_downlink_center_freq_val) - expected_tdm_downlink_center_freq) > tolerance:
+                            current_section_error_count += 1
+                            current_section_detailed_errors.append({
+                                'section_title': friendly_title,
+                                'type': 'dataframe_cell',
+                                'row': TDM_ROW_IDX + 1, 'col': DOWNLINK_CENTER_FREQ_COL_IDX + 1,
+                                'col_header': report_headers[DOWNLINK_CENTER_FREQ_COL_IDX],
+                                'user_value': user_tdm_downlink_center_freq_val,
+                                'answer_value': f"{expected_tdm_downlink_center_freq:.2f}",
+                                'message': f"TDM下行中心频点应为 信道段下行起始频率({segment_downlink_start_freq:.2f}) + 50 = {expected_tdm_downlink_center_freq:.2f}"
+                            })
+                    except (ValueError, TypeError):
+                        current_section_error_count += 1
+                        current_section_detailed_errors.append({
+                            'section_title': friendly_title, 'type': 'data_type_error',
+                            'row': TDM_ROW_IDX + 1, 'col': DOWNLINK_CENTER_FREQ_COL_IDX + 1,
+                            'col_header': report_headers[DOWNLINK_CENTER_FREQ_COL_IDX],
+                            'message': f"TDM下行中心频点 '{user_tdm_downlink_center_freq_val}' 应为数字。"
+                        })
+                else:
+                    current_section_error_count += 2 # For the 2 TDM center freqs that couldn't be checked
+                    current_section_detailed_errors.append({
+                        'section_title': friendly_title,
+                        'type': 'logic_check_failed',
+                        'message': "因信道段频率数据缺失或格式错误，无法校验TDM中心频点。请先修正信道段参数。"
+                    })
+
+
+                # --- ALOHA 行 (索引 ALOHA_ROW_IDX) ---
+                # ALOHA 速率检查
+                user_rate_aloha_val = str(user_channel_suite_df[ALOHA_ROW_IDX][RATE_COL_IDX]).strip()
+                try:
+                    if abs(float(user_rate_aloha_val) - expected_rate) > tolerance:
+                        current_section_error_count += 1
+                        current_section_detailed_errors.append({
+                            'section_title': friendly_title,
+                            'type': 'dataframe_cell',
+                            'row': ALOHA_ROW_IDX + 1, 'col': RATE_COL_IDX + 1,
+                            'col_header': report_headers[RATE_COL_IDX],
+                            'user_value': user_rate_aloha_val,
+                            'answer_value': str(expected_rate),
+                            'message': f"ALOHA速率应为 {expected_rate}"
+                        })
+                except (ValueError, TypeError):
+                    current_section_error_count += 1
+                    current_section_detailed_errors.append({
+                        'section_title': friendly_title, 'type': 'data_type_error',
+                        'row': ALOHA_ROW_IDX + 1, 'col': RATE_COL_IDX + 1,
+                        'col_header': report_headers[RATE_COL_IDX],
+                        'message': f"ALOHA速率 '{user_rate_aloha_val}' 应为数字。"
+                    })
+
+                # ALOHA 带宽检查
+                user_bandwidth_aloha_val = str(user_channel_suite_df[ALOHA_ROW_IDX][BANDWIDTH_COL_IDX]).strip()
+                try:
+                    if abs(float(user_bandwidth_aloha_val) - expected_bandwidth) > tolerance:
+                        current_section_error_count += 1
+                        current_section_detailed_errors.append({
+                            'section_title': friendly_title,
+                            'type': 'dataframe_cell',
+                            'row': ALOHA_ROW_IDX + 1, 'col': BANDWIDTH_COL_IDX + 1,
+                            'col_header': report_headers[BANDWIDTH_COL_IDX],
+                            'user_value': user_bandwidth_aloha_val,
+                            'answer_value': str(expected_bandwidth),
+                            'message': f"ALOHA带宽应为 {expected_bandwidth}"
+                        })
+                except (ValueError, TypeError):
+                    current_section_error_count += 1
+                    current_section_detailed_errors.append({
+                        'section_title': friendly_title, 'type': 'data_type_error',
+                        'row': ALOHA_ROW_IDX + 1, 'col': BANDWIDTH_COL_IDX + 1,
+                        'col_header': report_headers[BANDWIDTH_COL_IDX],
+                        'message': f"ALOHA带宽 '{user_bandwidth_aloha_val}' 应为数字。"
+                    })
+
+                if segment_frequencies_valid:
+                    # ALOHA 上行中心频点检查 (新增规则：基于上行起始频率+150)
+                    expected_aloha_uplink_center_freq = segment_uplink_start_freq + 150
+                    user_aloha_uplink_center_freq_val = str(user_channel_suite_df[ALOHA_ROW_IDX][UPLINK_CENTER_FREQ_COL_IDX]).strip()
+                    try:
+                        if abs(float(user_aloha_uplink_center_freq_val) - expected_aloha_uplink_center_freq) > tolerance:
+                            current_section_error_count += 1
+                            current_section_detailed_errors.append({
+                                'section_title': friendly_title,
+                                'type': 'dataframe_cell',
+                                'row': ALOHA_ROW_IDX + 1, 'col': UPLINK_CENTER_FREQ_COL_IDX + 1,
+                                'col_header': report_headers[UPLINK_CENTER_FREQ_COL_IDX],
+                                'user_value': user_aloha_uplink_center_freq_val,
+                                'answer_value': f"{expected_aloha_uplink_center_freq:.2f}",
+                                'message': f"ALOHA上行中心频点应为 信道段上行起始频率({segment_uplink_start_freq:.2f}) + 150 = {expected_aloha_uplink_center_freq:.2f}"
+                            })
+                    except (ValueError, TypeError):
+                        current_section_error_count += 1
+                        current_section_detailed_errors.append({
+                            'section_title': friendly_title, 'type': 'data_type_error',
+                            'row': ALOHA_ROW_IDX + 1, 'col': UPLINK_CENTER_FREQ_COL_IDX + 1,
+                            'col_header': report_headers[UPLINK_CENTER_FREQ_COL_IDX],
+                            'message': f"ALOHA上行中心频点 '{user_aloha_uplink_center_freq_val}' 应为数字。"
+                        })
+
+                    # ALOHA 下行中心频点检查
+                    expected_aloha_downlink_center_freq = segment_downlink_start_freq + 150
+                    user_aloha_downlink_center_freq_val = str(user_channel_suite_df[ALOHA_ROW_IDX][DOWNLINK_CENTER_FREQ_COL_IDX]).strip()
+                    try:
+                        if abs(float(user_aloha_downlink_center_freq_val) - expected_aloha_downlink_center_freq) > tolerance:
+                            current_section_error_count += 1
+                            current_section_detailed_errors.append({
+                                'section_title': friendly_title,
+                                'type': 'dataframe_cell',
+                                'row': ALOHA_ROW_IDX + 1, 'col': DOWNLINK_CENTER_FREQ_COL_IDX + 1,
+                                'col_header': report_headers[DOWNLINK_CENTER_FREQ_COL_IDX],
+                                'user_value': user_aloha_downlink_center_freq_val,
+                                'answer_value': f"{expected_aloha_downlink_center_freq:.2f}",
+                                'message': f"ALOHA下行中心频点应为 信道段下行起始频率({segment_downlink_start_freq:.2f}) + 150 = {expected_aloha_downlink_center_freq:.2f}"
+                            })
+                    except (ValueError, TypeError):
+                        current_section_error_count += 1
+                        current_section_detailed_errors.append({
+                            'section_title': friendly_title, 'type': 'data_type_error',
+                            'row': ALOHA_ROW_IDX + 1, 'col': DOWNLINK_CENTER_FREQ_COL_IDX + 1,
+                            'col_header': report_headers[DOWNLINK_CENTER_FREQ_COL_IDX],
+                            'message': f"ALOHA下行中心频点 '{user_aloha_downlink_center_freq_val}' 应为数字。"
+                        })
+                else:
+                    current_section_error_count += 2 # For the 2 ALOHA center freqs that couldn't be checked
+                    current_section_detailed_errors.append({
+                        'section_title': friendly_title,
+                        'type': 'logic_check_failed',
+                        'message': "因信道段频率数据缺失或格式错误，无法校验ALOHA中心频点。请先修正信道段参数。"
+                    })
+
+        elif config["check_type"] == _CHECK_TYPE_VIRTUAL_SUBNET_LOGIC:
+            user_df_value = _df_to_lol(input_values[config["params"][0]])
+            user_selected_rate = input_values[config["params"][1]]
             report_headers = config["report_headers"]
 
-            # --- Textbox fields (_LOCAL_CC_ADDRESS_LABEL, _REMOTE_XX_ADDRESS_LABEL) ---
-            # No exact content check, but we can check if they are simply empty.
-            # The previous approach used `correct_textbox_answers` which we've removed.
-            # If you want to ensure they are NOT empty, add a simple check here:
-            # For this context, we will simply assume they are user input and not grade them.
-            # So, no error_count increment here for textboxes.
+            expected_rows = 1
+            expected_cols = 6
+
+            if not isinstance(user_df_value, list) or len(user_df_value) != expected_rows or \
+                    not all(isinstance(row, list) and len(row) == expected_cols for row in user_df_value):
+                section_format_error = True
+                current_section_error_count += 2 # Count for the 2 main logic checks (bandwidth/frequency overlap)
+                current_section_detailed_errors.append({
+                    'section_title': friendly_title,
+                    'type': 'dataframe_format_error',
+                    'message': f"虚拟子网参数表格格式错误或行/列数不匹配。应为 {expected_rows} 行 {expected_cols} 列。"
+                })
+
+            if not section_format_error:
+                user_row = user_df_value[0]
+
+                BW_COL_IDX = 1
+                DL_START_FREQ_COL_IDX = 2
+                DL_END_FREQ_COL_IDX = 3
+                UL_START_FREQ_COL_IDX = 4
+                UL_END_FREQ_COL_IDX = 5
+
+                user_bandwidth_val = user_row[BW_COL_IDX]
+                user_dl_start = user_row[DL_START_FREQ_COL_IDX]
+                user_dl_end = user_row[DL_END_FREQ_COL_IDX]
+                user_ul_start = user_row[UL_START_FREQ_COL_IDX]
+                user_ul_end = user_row[UL_END_FREQ_COL_IDX]
+
+                if user_selected_rate is None:
+                    current_section_error_count += 1
+                    current_section_detailed_errors.append({
+                        'section_title': friendly_title,
+                        'type': 'logic_check_failed',
+                        'message': "请选择一个虚拟子网速率，以便校验带宽。"
+                    })
+                else:
+                    bw_rate_err_count, bw_rate_detailed_errors = _check_bandwidth_vs_rate_rule(
+                        friendly_title, 1,
+                        user_selected_rate, user_bandwidth_val,
+                        "选择速率", report_headers[BW_COL_IDX], _KBP_MAPPING
+                    )
+                    current_section_error_count += bw_rate_err_count
+                    current_section_detailed_errors.extend(bw_rate_detailed_errors)
+
+                freq_overlap_err_count, freq_overlap_detailed_errors = _check_frequency_overlap_rule(
+                    friendly_title, 1,
+                    user_dl_start, user_dl_end, user_ul_start, user_ul_end,
+                    report_headers[DL_START_FREQ_COL_IDX], report_headers[DL_END_FREQ_COL_IDX],
+                    report_headers[UL_START_FREQ_COL_IDX], report_headers[UL_END_FREQ_COL_IDX]
+                )
+                current_section_error_count += freq_overlap_err_count
+                current_section_detailed_errors.extend(freq_overlap_detailed_errors)
+
+
+        elif config["check_type"] == _CHECK_TYPE_TEXTBOX_AND_DATAFRAME:
+            user_df_value = _df_to_lol(input_values[config["params"][-1]])
+            report_headers = config["report_headers"]
+            # NOTE: The textbox values (local_cc_address_value, remote_xx_address_value) are captured but not
+            # explicitly checked for correctness here against 'correct_textbox_answers' as per the design evolution.
+            # Only the dataframe content and its logic are currently being graded in this block.
 
             if not isinstance(user_df_value, list) or not all(isinstance(row, list) for row in user_df_value):
                 section_format_error = True
@@ -744,10 +922,10 @@ def check_paper(
 
             if not section_format_error:
                 user_rows = len(user_df_value)
-                # Assuming P2P table should always have 2 rows ("发送", "接收")
                 expected_rows = 2
                 if user_rows != expected_rows:
-                    # Penalize for row count mismatch, assuming each row has potential for 2 logic errors
+                    # Each row is expected to have two main checks (frequency rule and bandwidth rule)
+                    # So, if a row is missing, consider it 2 errors for that row.
                     current_section_error_count += abs(user_rows - expected_rows) * 2
                     current_section_detailed_errors.append({
                         'section_title': friendly_title,
@@ -758,8 +936,6 @@ def check_paper(
                     })
                 rows_to_compare = min(user_rows, expected_rows)
 
-                # Identify relevant column indices for P2P table
-                # _P2P_HEADERS: ["名称", "速率kbps", "带宽（khz）", "下行起始频点（khz）", "下行终止频点（khz）", "上行起始频点（khz）", "上行终止频点（khz）"]
                 p2p_rate_idx = _P2P_RATE_COL_INDEX
                 p2p_bandwidth_idx = _P2P_BANDWIDTH_COL_INDEX
                 p2p_downlink_start_idx = _P2P_DOWNLINK_START_COL_INDEX
@@ -767,22 +943,19 @@ def check_paper(
 
                 for r in range(rows_to_compare):
                     user_row = user_df_value[r]
-                    # Check for minimum number of columns to contain all relevant data
                     min_cols_needed = max(p2p_rate_idx, p2p_bandwidth_idx, p2p_downlink_start_idx,
                                           p2p_uplink_end_idx) + 1
                     if len(user_row) < min_cols_needed:
-                        # This means essential columns are missing for logic checks
-                        current_section_error_count += 2  # Assume both logic checks for this row would fail
+                        current_section_error_count += 2 # Count 2 errors for missing critical columns
                         current_section_detailed_errors.append({
                             'section_title': friendly_title,
                             'type': 'column_count_mismatch',
                             'row': r + 1,
                             'message': f"第 {r + 1} 行列数不足，缺少必要的频率或带宽/速率列，无法进行校验。"
                         })
-                        continue  # Skip logic checks for this malformed row
+                        continue
 
-                    # Check for Uplink_End <= Downlink_Start for P2P table
-                    # Ensure indices are valid for the current row's actual length before accessing
+                    # Check uplink/downlink frequency rule (UL_End > DL_Start)
                     if p2p_downlink_start_idx < len(user_row) and p2p_uplink_end_idx < len(user_row):
                         dl_start_val = user_row[p2p_downlink_start_idx]
                         ul_end_val = user_row[p2p_uplink_end_idx]
@@ -795,7 +968,7 @@ def check_paper(
                         current_section_error_count += freq_rel_err_count
                         current_section_detailed_errors.extend(freq_rel_detailed_errors)
                     else:
-                        current_section_error_count += 1  # Count as one error for missing freq columns if they should be there
+                        current_section_error_count += 1
                         current_section_detailed_errors.append({
                             'section_title': friendly_title,
                             'type': 'column_count_mismatch',
@@ -803,8 +976,7 @@ def check_paper(
                             'message': f"第 {r + 1} 行频率列缺失，无法进行上行/下行频点逻辑校验。"
                         })
 
-                    # Check for Bandwidth >= Required Bandwidth from KBP mapping
-                    # Ensure indices are valid for the current row's actual length before accessing
+                    # Check bandwidth vs rate rule
                     if p2p_rate_idx < len(user_row) and p2p_bandwidth_idx < len(user_row):
                         user_rate_val = user_row[p2p_rate_idx]
                         user_bandwidth_val = user_row[p2p_bandwidth_idx]
@@ -812,12 +984,12 @@ def check_paper(
                         bw_rate_err_count, bw_rate_detailed_errors = _check_bandwidth_vs_rate_rule(
                             friendly_title, r + 1,
                             user_rate_val, user_bandwidth_val,
-                            report_headers[p2p_rate_idx], report_headers[p2p_bandwidth_idx]
+                            report_headers[p2p_rate_idx], report_headers[p2p_bandwidth_idx], _KBP_MAPPING
                         )
                         current_section_error_count += bw_rate_err_count
                         current_section_detailed_errors.extend(bw_rate_detailed_errors)
                     else:
-                        current_section_error_count += 1  # Count as one error for missing rate/bandwidth columns
+                        current_section_error_count += 1
                         current_section_detailed_errors.append({
                             'section_title': friendly_title,
                             'type': 'column_count_mismatch',
@@ -825,31 +997,15 @@ def check_paper(
                             'message': f"第 {r + 1} 行速率或带宽列缺失，无法进行带宽速率校验。"
                         })
 
-            # Since KBP is hardcoded, no kbp_load_error is possible for this check type anymore.
-            # This 'if' block is removed.
-            # if _KBP_LOAD_ERROR and not any(d.get('type') == 'kbp_load_error' for d in current_section_detailed_errors):
-            #     current_section_error_count += 1 # Add one general error for KBP load failure
-            #     current_section_detailed_errors.append({
-            #         'section_title': friendly_title,
-            #         'type': 'kbp_load_error',
-            #         'message': _KBP_LOAD_ERROR # Use the global error message
-            #     })
-
-
         else:
             print(
                 f"Warning: Unsupported check type '{config['check_type']}' for section '{friendly_title}'. Cannot count errors.")
-            # For unsupported types, we can add a specific error to detailed_errors
             current_section_detailed_errors.append({
                 'section_title': friendly_title,
                 'type': 'unsupported_check_type',
                 'message': f"此部分使用了不支持的检查类型 '{config['check_type']}'。"
             })
-            # Do not assign to current_section_error_count here, let `len(current_section_detailed_errors)` cover it.
 
-        # Collect summary errors and detailed errors
-        # If there are any detailed errors for this section, add it to the summary.
-        # The 'count' in the summary will be the number of detailed errors found.
         if current_section_detailed_errors:
             error_sections_with_counts.append((friendly_title, len(current_section_detailed_errors)))
 
@@ -858,13 +1014,11 @@ def check_paper(
 
             detailed_errors.extend(current_section_detailed_errors)
 
-    # Format the output message string for summary
     if not error_sections_with_counts:
         error_message_string = "恭喜，答卷全部正确！"
     else:
         error_message_string = "以下部分填写有误：\n\n"
         for title, count in error_sections_with_counts:
-            # Here, 'count' will always be an int (len(current_section_detailed_errors))
             error_message_string += f"- **{title}**：错误个数：{count}\n"
 
         if detailed_errors:

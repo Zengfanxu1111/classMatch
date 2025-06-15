@@ -43,4 +43,4 @@ def perform_analysis_and_plot_radar(error_sections_with_counts, character_name="
     if peer_review_score is not None:
         analysis_message_str += f"\n组内评价平均得分：{peer_review_score:.2f}"
 
-    return analysis_message_str, None # No image object returned from here anymore
+    return analysis_message_str, None
